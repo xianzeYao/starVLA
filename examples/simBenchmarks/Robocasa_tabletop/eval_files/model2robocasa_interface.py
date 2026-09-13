@@ -231,6 +231,7 @@ class PolicyWarper:
             if "geometry" not in response["data"]:
                 raise ValueError("policy server did not return requested geometry")
             geometry = dict(response["data"]["geometry"])
+            geometry["predicted_action"] = server_actions.copy()
             if getattr(self, "return_rollout_features", False):
                 feature_keys = (
                     "uvd_hidden",

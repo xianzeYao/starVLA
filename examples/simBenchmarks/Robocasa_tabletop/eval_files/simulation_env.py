@@ -217,11 +217,13 @@ class SimulationInferenceEnv:
                         batch_index=env_idx,
                         action_horizon=config.trace_action_horizon,
                         image_size=config.trace_image_size,
+                        depth_scale=config.trace_depth_scale,
                     )
                     if trace_record is not None:
                         trace_record.update(
                             {
                                 "task_index": config.task_index,
+                                "env_name": config.env_name,
                                 "episode_index": trace_episode_ids[env_idx],
                                 "decision_index": trace_decision_indices[env_idx],
                             }
@@ -527,7 +529,7 @@ def eval_gr1_unified(args: Args) -> None:
                 args.trace_consistency_output is not None
                 or args.rollout_features_output is not None
             ),
-            geometry_uvd_only=args.rollout_features_output is not None,
+            geometry_uvd_only=(args.trace_consistency_output is not None or args.rollout_features_output is not None),
             return_rollout_features=args.rollout_features_output is not None,
         )
         run_evaluation(

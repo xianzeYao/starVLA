@@ -68,6 +68,7 @@ def capture_robocasa_thumb_index_uvd(
     *,
     image_size: int = 224,
     depth_scale: float = 1.0,
+    return_metadata: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Capture the exact bilateral thumb/index midpoint target used in training."""
 
@@ -115,6 +116,16 @@ def capture_robocasa_thumb_index_uvd(
     uvd[..., 0] /= float(geometry_size - 1)
     uvd[..., 1] /= float(geometry_size - 1)
     uvd[..., 2] /= depth_scale
+    if return_metadata:
+        return uvd, np.asarray(valid, dtype=np.bool_), {
+            "camera_name": "egoview", "intrinsic_transformed_256": camera_k.tolist(),
+            "T_world_camera": t_world_camera.tolist(), "world_pinch_xyz_m": world_xyz.tolist(),
+            "geometry_image_size": [geometry_size, geometry_size],
+            "report_image_size": [image_size, image_size], "depth_scale_m": depth_scale,
+            "uv_normalization": "transformed_256_pixel / 255",
+            "projection": "inverse(T_world_camera); camera XYZ projected by transformed intrinsic",
+            "body_pairs": [list(pair) for pair in _THUMB_INDEX_BODY_PAIRS],
+        }
     return uvd, np.asarray(valid, dtype=np.bool_)
 
 
@@ -240,6 +251,7 @@ def evaluate_trace_decision(
     *,
     action_horizon: int,
     image_size: int,
+    direct_only: bool = False,
 ) -> dict[str, Any]:
     """Align one sparse prediction with one actually executed action prefix."""
 
@@ -278,11 +290,7 @@ def evaluate_trace_decision(
     direct_realized = realized[direct_offsets]
     direct_valid = valid[direct_offsets]
 
-    interpolated_predicted = _interpolate_trace(
-        predicted, trace_offsets, executed_steps
-    )
-    interpolated_offsets = np.arange(executed_steps + 1, dtype=np.int64)
-    return {
+    result = {
         "schema_version": 1,
         "trace_coordinate_mode": "uv" if predicted.shape[-1] == 2 else "uvd",
         "action_horizon": int(action_horizon),
@@ -296,13 +304,13 @@ def evaluate_trace_decision(
             direct_realized,
             direct_valid,
         ),
-        "interpolated": _comparison_block(
-            interpolated_offsets,
-            interpolated_predicted,
-            realized,
-            valid,
-        ),
     }
+    if not direct_only:
+        result["interpolated"] = _comparison_block(
+            np.arange(executed_steps + 1, dtype=np.int64),
+            _interpolate_trace(predicted, trace_offsets, executed_steps), realized, valid,
+        )
+    return result
 
 
 def _summarize_blocks(
@@ -360,7 +368,7 @@ def summarize_trace_records(
     image_size = image_sizes.pop()
     action_horizon = action_horizons.pop()
     direct_blocks = [record["direct"] for record in values]
-    interpolated_blocks = [record["interpolated"] for record in values]
+    interpolated_blocks = [record["interpolated"] for record in values if "interpolated" in record]
 
     track_count = np.asarray(direct_blocks[0]["valid"], dtype=np.bool_).shape[1]
     hand_names = ["left", "right"] if track_count == 2 else [f"track_{i}" for i in range(track_count)]
@@ -420,6 +428,7 @@ def evaluate_vector_trace_decision(
     batch_index: int,
     action_horizon: int,
     image_size: int,
+    depth_scale: float = 1.0,
 ) -> dict[str, Any] | None:
     """Pair one response batch element with the same vector environment result."""
 
@@ -450,13 +459,92 @@ def evaluate_vector_trace_decision(
             "trace_executed_steps does not match realized trajectory length: "
             f"{executed_steps} != {len(realized_uvd) - 1}"
         )
-    return evaluate_trace_decision(
+    result = evaluate_trace_decision(
         trace.uvd,
         realized_uvd,
         realized_valid,
         action_horizon=action_horizon,
         image_size=image_size,
+        direct_only=True,
     )
+    result.update({"uvd_depth_units": "normalized_by_depth_scale", "depth_scale": depth_scale,
+                   "hand_ids": trace.track_ids.tolist(), "hand_names": ["left", "right"],
+                   "predicted_times": trace.times.tolist()})
+    if "predicted_action" in geometry:
+        action = np.asarray(geometry["predicted_action"])[batch_index]
+        if action.shape != (action_horizon, 29) or not np.isfinite(action).all():
+            raise ValueError(f"invalid action chunk: {action.shape}")
+        result["predicted_action"] = action.tolist()
+    if "trace_camera_json" in env_infos:
+        result["camera_samples"] = json.loads(env_infos["trace_camera_json"][batch_index])
+    return result
+
+
+def summarize_episode_task_macro(records):
+    """Direct aligned point MAE; equal episodes within tasks, then equal tasks.
+
+    D in the legacy raw records is normalized, not metres. Missing values stay
+    None; valid_task_count makes incomplete metric coverage explicit.
+    """
+    from collections import defaultdict
+    records = list(records)
+    keys = ("uv_error_px", "depth_error_mm", "uvd_error")
+    coordinate_dims = {np.asarray(r["direct"]["predicted_uvd"]).shape[-1] for r in records}
+    if coordinate_dims and coordinate_dims not in ({2}, {3}):
+        raise ValueError(f"mixed or invalid trace coordinates: {coordinate_dims}")
+    uv_only = coordinate_dims == {2}
+    tasks = sorted({r["task_index"] for r in records})
+    offsets = sorted({o for r in records for o in r["trace_offsets"]}) if records and "trace_offsets" in records[0] else sorted({o for r in records for o in r["direct"]["offsets"]})
+
+    def aggregate(offset=None):
+        episodes = defaultdict(list)
+        for r in records:
+            block = r["direct"]
+            p, actual = np.asarray(block["predicted_uvd"], dtype=float), np.asarray(block["realized_uvd"], dtype=float)
+            valid = np.asarray(block["valid"], dtype=bool) & np.isfinite(p).all(-1) & np.isfinite(actual).all(-1)
+            if offset is not None:
+                valid &= (np.asarray(block["offsets"]) == offset)[:, None]
+            diff = np.abs(p - actual)
+            width, height = r.get("report_image_size", [r["image_size"], r["image_size"]])
+            scale = float(r.get("depth_scale", 1.0))
+            if scale <= 0:
+                raise ValueError("depth scale must be positive")
+            units = r.get("uvd_depth_units", "normalized_by_depth_scale")
+            if units not in ("meters", "normalized_by_depth_scale"):
+                raise ValueError(f"unknown depth units: {units}")
+            uv_error = (diff[..., 0]*(width-1)+diff[..., 1]*(height-1))/2
+            if uv_only:
+                error = uv_error[..., None]
+            else:
+                dm = diff[..., 2] * (scale if units == "normalized_by_depth_scale" else 1.0)
+                error = np.stack((uv_error, 1000*dm,
+                                  (diff[..., 0]+diff[..., 1]+dm/scale)/3), axis=-1)
+            episodes[(r["task_index"], r["episode_index"])].append(error[valid])
+        rows = []
+        for task in tasks:
+            means, points = [], 0
+            for (t, _), blocks in episodes.items():
+                if t != task:
+                    continue
+                values = np.concatenate(blocks, axis=0)
+                if len(values):
+                    means.append(values.mean(0))
+                    points += len(values)
+            mean = np.mean(means, axis=0) if means else [None]*3
+            if uv_only and means:
+                mean = [float(mean[0]), None, None]
+            rows.append(dict(task_index=task, **dict(zip(keys, mean)),
+                             valid_episode_count=len(means), valid_point_count=points))
+        valid_rows = [r for r in rows if r["valid_episode_count"]]
+        overall = {k: float(np.mean([r[k] for r in valid_rows]))
+                   if valid_rows and not (uv_only and k != "uv_error_px") else None for k in keys}
+        overall.update(valid_task_count=len(valid_rows),
+                       valid_episode_count=sum(r["valid_episode_count"] for r in rows),
+                       valid_point_count=sum(r["valid_point_count"] for r in rows))
+        return overall, rows
+    overall, rows = aggregate()
+    return {"overall": overall, "tasks": rows,
+            "offsets": [dict(offset=o, **aggregate(o)[0]) for o in offsets]}
 
 
 def load_trace_records(path: str | Path) -> list[dict[str, Any]]:

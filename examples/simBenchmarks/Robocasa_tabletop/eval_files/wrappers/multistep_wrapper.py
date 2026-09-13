@@ -14,6 +14,8 @@
 # limitations under the License.
 
 from collections import defaultdict, deque
+from functools import partial
+import json
 
 import gymnasium as gym
 import numpy as np
@@ -131,7 +133,7 @@ class MultiStepWrapper(gym.Wrapper):
                 capture_robocasa_thumb_index_uvd,
             )
 
-            trace_capture_fn = capture_robocasa_thumb_index_uvd
+            trace_capture_fn = partial(capture_robocasa_thumb_index_uvd, return_metadata=True)
         self.trace_capture_fn = trace_capture_fn
         self.max_steps_needed = self.get_max_steps_needed()
 
@@ -214,12 +216,16 @@ class MultiStepWrapper(gym.Wrapper):
         dones = []
         trace_uvd = []
         trace_valid = []
+        trace_cameras = []
         if self.trace_consistency:
-            uvd, valid = self.trace_capture_fn(
+            captured = self.trace_capture_fn(
                 self.env,
                 image_size=self.trace_image_size,
                 depth_scale=self.trace_depth_scale,
             )
+            uvd, valid = captured[:2]
+            if len(captured) == 3:
+                trace_cameras.append(captured[2])
             trace_uvd.append(uvd)
             trace_valid.append(valid)
         for step in range(self.n_action_steps):
@@ -242,11 +248,14 @@ class MultiStepWrapper(gym.Wrapper):
             self.done.append(done)
             self._add_info(info)
             if self.trace_consistency:
-                uvd, valid = self.trace_capture_fn(
+                captured = self.trace_capture_fn(
                     self.env,
                     image_size=self.trace_image_size,
                     depth_scale=self.trace_depth_scale,
                 )
+                uvd, valid = captured[:2]
+                if len(captured) == 3:
+                    trace_cameras.append(captured[2])
                 trace_uvd.append(uvd)
                 trace_valid.append(valid)
 
@@ -266,6 +275,8 @@ class MultiStepWrapper(gym.Wrapper):
             info["trace_realized_uvd"] = np.stack(trace_uvd).astype(np.float32)
             info["trace_realized_valid"] = np.stack(trace_valid).astype(np.bool_)
             info["trace_executed_steps"] = len(trace_uvd) - 1
+            if trace_cameras:
+                info["trace_camera_json"] = json.dumps(trace_cameras)
         return observation, reward, done, truncated, info
 
     def _get_obs(self, video_delta_indices, state_delta_indices):
