@@ -1,0 +1,101 @@
+# RoboCasa V2 q32 task-prompt model with UV trace supervision only.
+run_id: qwen35_gr00t_robocasa_fourier_CoT_v2_q32_nodepthcond_pure_uv_8gpu_bs16
+run_root_dir: /root/data/yxz/outputs
+seed: 42
+wandb_entity: yao-xian-ze
+wandb_project: CoT
+is_debug: false
+version_id: '0.21'
+framework:
+  name: QwenGR00TCoTV2
+  qwenvl:
+    base_vlm: /root/data/yxz/models/Qwen3.5-4B
+    attn_implementation: flash_attention_2
+  action_model:
+    action_model_type: DiT-B
+    hidden_size: 1024
+    add_pos_embed: true
+    max_seq_len: 1024
+    action_dim: 29
+    state_dim: 58
+    action_horizon: 16
+    repeated_diffusion_steps: 8
+    noise_beta_alpha: 1.5
+    noise_beta_beta: 1.0
+    noise_s: 0.999
+    num_timestep_buckets: 1000
+    num_inference_timesteps: 4
+    num_target_vision_tokens: 32
+    diffusion_model_cfg:
+      dropout: 0.2
+      final_dropout: true
+      interleave_self_attention: true
+      norm_type: ada_norm
+      num_layers: 16
+      output_dim: 1024
+      positional_embeddings: null
+  geometry:
+    depth_query_count: 8
+    enable_current_depth: false
+    enable_future_depth: false
+    include_depth_in_action_condition: false
+    trace_coordinate_mode: uv
+    full_attention_backend: sdpa
+    uvd_num_points: 6
+    uvd_hand_count: 2
+    uvd_depth_scale: 1.0
+    depth_decoder_features: 256
+    depth_decoder_stages: 3
+    depth_output_size: 224
+    lambda_action: 1.0
+    lambda_depth_current: 0.0
+    lambda_depth_future: 0.0
+    lambda_uvd: 0.62
+    lambda_uvd_relative: 0.1
+datasets:
+  vla_data:
+    dataset_py: robocasa_lerobot_datasets
+    data_root_dir: /root/data/yxz/datasets/robocasa_fourier_rerender
+    data_mix: fourier_gr1_unified_1000
+    enable_cot_geometry: true
+    action_mode: abs
+    CoT_prompt: "Your task is {instruction}."
+    per_device_batch_size: 16
+    video_backend: torchvision_av
+    num_workers: 4
+    persistent_workers: true
+    prefetch_factor: 2
+    include_state: false
+    cot_geometry:
+      action_horizon: 16
+      uvd_num_points: 6
+      image_size: 224
+      uvd_depth_scale: 1.0
+      episode_cache_size: 1
+trainer:
+  max_train_steps: 100000
+  num_warmup_steps: 5000
+  save_interval: 10000
+  eval_interval: 1000
+  learning_rate:
+    base: 1.0e-05
+    qwen_vl_interface: 1.0e-05
+    action_model: 0.0001
+  lr_scheduler_type: cosine_with_min_lr
+  scheduler_specific_kwargs:
+    min_lr: 5.0e-07
+  freeze_modules: ''
+  logging_frequency: 50
+  gradient_clipping: 1.0
+  gradient_accumulation_steps: 1
+  test_diagnostics:
+    enabled: false
+    log_module_gradients: true
+    module_gradient_interval: 100
+    log_token_utilization: true
+    log_decoder_reliance: true
+    log_uvd_time_metrics: true
+  optimizer:
+    betas: [0.9, 0.95]
+    eps: 1.0e-08
+    weight_decay: 1.0e-08
