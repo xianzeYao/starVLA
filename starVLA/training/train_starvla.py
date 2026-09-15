@@ -328,6 +328,22 @@ class VLATrainer(TrainerUtils):
 
         return batch_vla
 
+    def _should_save_periodic_checkpoint(self) -> bool:
+        """Return whether this step should write a periodic checkpoint."""
+        if (
+            self.completed_steps <= 0
+            or self.completed_steps % self.config.trainer.save_interval != 0
+        ):
+            return False
+        return not (
+            bool(
+                self.config.trainer.get(
+                    "skip_final_step_checkpoint", False
+                )
+            )
+            and self.completed_steps >= self.config.trainer.max_train_steps
+        )
+
     def train(self):
         """Execute training loop."""
         self._log_training_config()
@@ -378,7 +394,7 @@ class VLATrainer(TrainerUtils):
             step_metrics.update(self._get_gpu_memory_metrics())
             self._log_metrics(step_metrics)
 
-            if self.completed_steps % self.config.trainer.save_interval == 0 and self.completed_steps > 0:
+            if self._should_save_periodic_checkpoint():
                 self._save_checkpoint()
 
             if self.completed_steps >= self.config.trainer.max_train_steps:

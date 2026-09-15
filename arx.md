@@ -34,7 +34,8 @@
 - Vision target tokens: q32. CoT version: V2. Action conditioning:
   nodepthcond.
 - Per-device batch: 16; 4 GPUs; global batch: 64; gradient accumulation: 1.
-- Training length: 80k optimizer steps; save every 20k.
+- Training length: 80k optimizer steps; save a periodic checkpoint at 40k.
+  The 80k periodic checkpoint is skipped; `final_model` stores the 80k weights.
 - Prompt template: `Your task is {instruction}.`.
   Published task strings already end with a period, so the rendered prompt
   currently has two trailing periods. This was intentionally left unchanged

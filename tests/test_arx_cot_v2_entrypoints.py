@@ -3,9 +3,13 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import torch
 from omegaconf import OmegaConf
+
+from starVLA.training.train_starvla import VLATrainer
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,7 +69,8 @@ def test_arx_q32_nodepthcond_yaml_has_fixed_robot_and_geometry_contract():
     assert data.video_backend == "pyav"
     assert data.num_workers == 8
     assert cfg.trainer.max_train_steps == 80000
-    assert cfg.trainer.save_interval == 20000
+    assert cfg.trainer.save_interval == 40000
+    assert cfg.trainer.skip_final_step_checkpoint is True
 
 
 def test_arx_v2_config_differs_only_in_dataset_identity():
@@ -169,3 +174,103 @@ def test_arx_launchers_default_expandable_cuda_allocator(launcher, tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert "expandable_segments:True" in result.stdout.splitlines()
+
+
+class _OneStepCheckpointTrainer(VLATrainer):
+    def __init__(self, output_dir, *, skip_final_step_checkpoint=None):
+        trainer_config = {
+            "max_train_steps": 80000,
+            "save_interval": 40000,
+            "eval_interval": 80001,
+        }
+        if skip_final_step_checkpoint is not None:
+            trainer_config["skip_final_step_checkpoint"] = (
+                skip_final_step_checkpoint
+            )
+        self.config = OmegaConf.create(
+            {
+                "output_dir": str(output_dir),
+                "trainer": trainer_config,
+                "datasets": {"vla_data": {"per_device_batch_size": 16}},
+            }
+        )
+        self.expected_state_dict = {
+            "probe_weight": torch.tensor([3.25], dtype=torch.float32)
+        }
+        self.model = object()
+        self.accelerator = SimpleNamespace(
+            sync_gradients=True,
+            is_local_main_process=False,
+            is_main_process=True,
+            num_processes=4,
+            gradient_accumulation_steps=1,
+            get_state_dict=lambda model: {
+                key: value.clone()
+                for key, value in self.expected_state_dict.items()
+            },
+            wait_for_everyone=lambda: None,
+        )
+        self.completed_steps = 79999
+        self.total_batch_size = 64
+        self.save_events = []
+        self._wandb_enabled = False
+
+    def _log_training_config(self):
+        pass
+
+    def _create_data_iterators(self):
+        pass
+
+    def _get_next_batch(self):
+        return None
+
+    def _train_step(self, batch_vla):
+        return {}
+
+    def _get_gpu_memory_metrics(self):
+        return {}
+
+    def _log_metrics(self, metrics):
+        pass
+
+    def _save_checkpoint(self):
+        self.save_events.append("periodic")
+
+
+def test_skip_final_step_checkpoint_avoids_duplicate_and_saves_final_weights(
+    tmp_path,
+):
+    trainer = _OneStepCheckpointTrainer(
+        tmp_path,
+        skip_final_step_checkpoint=True,
+    )
+
+    trainer.train()
+
+    assert trainer.save_events == []
+    final_path = tmp_path / "final_model" / "pytorch_model.pt"
+    assert final_path.is_file()
+    saved_state = torch.load(final_path, map_location="cpu", weights_only=True)
+    torch.testing.assert_close(
+        saved_state["probe_weight"],
+        trainer.expected_state_dict["probe_weight"],
+    )
+
+
+def test_final_step_periodic_checkpoint_is_preserved_by_default(tmp_path):
+    trainer = _OneStepCheckpointTrainer(tmp_path)
+
+    trainer.train()
+
+    assert trainer.save_events == ["periodic"]
+    assert (tmp_path / "final_model" / "pytorch_model.pt").is_file()
+
+
+def test_skip_final_step_checkpoint_keeps_intermediate_periodic_save(tmp_path):
+    trainer = _OneStepCheckpointTrainer(
+        tmp_path,
+        skip_final_step_checkpoint=True,
+    )
+    trainer.completed_steps = 40000
+
+    assert trainer._should_save_periodic_checkpoint() is True
