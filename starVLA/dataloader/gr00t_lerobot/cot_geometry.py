@@ -268,6 +268,16 @@ class CoTLeRobotSingleDataset(LeRobotSingleDataset):
         future_index = min(base_index + horizon, len(depth) - 1)
         k = int(self._cot_option("uvd_num_points", int(np.floor(0.3 * horizon)) + 2))
         sample_indices = sample_real_uvd_indices(base_index, future_index, k)
+        terminal_repeat = self._cot_option("terminal_repeat", False)
+        if not isinstance(terminal_repeat, (bool, np.bool_)):
+            raise ValueError(
+                "terminal_repeat must be a boolean, "
+                f"got {terminal_repeat!r}"
+            )
+        if terminal_repeat and len(sample_indices) < k:
+            sample_indices = np.pad(
+                sample_indices, (0, k - len(sample_indices)), mode="edge"
+            )
         target_size = int(self._cot_option("image_size", 224))
         depth_scale = float(self._cot_option("uvd_depth_scale", 1.0))
         target_hw = (target_size, target_size)

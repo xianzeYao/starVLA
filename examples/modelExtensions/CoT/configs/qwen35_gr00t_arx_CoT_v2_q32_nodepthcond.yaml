@@ -42,7 +42,7 @@ framework:
     include_depth_in_action_condition: false
     reconstruct_wrist_depth: false
     full_attention_backend: sdpa
-    uvd_num_points: 6
+    uvd_num_points: 17
     uvd_hand_count: 2
     uvd_depth_scale: 1.0
     depth_decoder_features: 256
@@ -70,7 +70,8 @@ datasets:
     include_state: false
     cot_geometry:
       action_horizon: 50
-      uvd_num_points: 6
+      uvd_num_points: 17
+      terminal_repeat: true
       image_size: 224
       uvd_depth_scale: 1.0
       episode_cache_size: 1

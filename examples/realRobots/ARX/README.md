@@ -8,7 +8,9 @@ This path trains `QwenCoTv2_arx` on the public v1 and v2 sweep datasets:
 
 - RGB model order: `camera_l`, `camera_r`, `camera_h`.
 - Geometry source: only the third view, `camera_h`.
-- UVD order: `[left, right]`, with `(u, v, depth_m)` per hand.
+- UVD order: `[left, right]`, with `(u, v, depth_m)` per hand; horizon 50
+  samples 17 temporal points per hand and uses 34 UVD latent tokens total.
+  Short tail windows repeat the terminal frame to keep this shape fixed.
 - Raw state/action order: `[left_6, left_gripper, right_6, right_gripper]`.
 - Model state/action order: `[left_6, right_6, left_gripper, right_gripper]`.
 - Both grippers are continuous joint values normalized with `min_max`.

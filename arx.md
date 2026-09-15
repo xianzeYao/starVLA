@@ -21,7 +21,9 @@
   enabled.
 - Depth tokens are not included in the action condition.
 - UVD contains bilateral tracks in `[left, right]` order, with
-  `(u, v, depth_m)` for each hand.
+  `(u, v, depth_m)` for each hand. Horizon 50 uses 17 temporal points per
+  hand (`floor(50 * 0.3) + 2`), for 34 UVD latent tokens total.
+  Short tail windows repeat the terminal frame to keep this shape fixed.
 - Raw state/action order:
   `[left_6, left_gripper, right_6, right_gripper]`.
 - Model state/action order:
@@ -139,7 +141,7 @@ The same values can be changed directly in the YAML under
 ## Verified behavior and performance
 
 - v1 reader: 26,720 samples, three 224x224 RGB images, action `(50, 14)`,
-  future depth `(1, 224, 224)`, UVD `(6, 2, 3)`.
+  future depth `(1, 224, 224)`, UVD `(17, 2, 3)`.
 - v2 reader: 38,772 samples with the same tensor contract.
 - DataLoader uses `pyav`, 8 workers per rank, persistent workers, and
   prefetch factor 2.

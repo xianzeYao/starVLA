@@ -140,6 +140,34 @@ def test_arx_geometry_reader_uses_camera_h_precomputed_bilateral_uvd(tmp_path):
     assert state.shape == (3, 14)
 
 
+def test_arx_geometry_targets_repeat_terminal_frame_to_fixed_uvd_count(
+    tmp_path,
+):
+    dataset = _make_reader(tmp_path)
+    dataset._cot_current_trajectory_id = 4
+    dataset._cot_current_base_index = 0
+    dataset._cot_data_cfg = {
+        "cot_geometry": {
+            "action_horizon": 50,
+            "uvd_num_points": 17,
+            "terminal_repeat": True,
+            "image_size": 4,
+            "uvd_depth_scale": 1.0,
+            "reconstruct_wrist_depth": False,
+        }
+    }
+
+    targets = dataset._geometry_targets()
+
+    assert targets["uvd"].shape == (17, 2, 3)
+    assert targets["uvd_valid_mask"].shape == (17, 2)
+    np.testing.assert_array_equal(
+        targets["uvd_frame_indices"],
+        np.asarray([0, 1, *([2] * 15)], dtype=np.int64),
+    )
+    np.testing.assert_array_equal(targets["uvd_endpoint_indices"], [0, 16])
+
+
 def test_arx_geometry_reader_prefers_depth_mmap_cache(tmp_path, monkeypatch):
     dataset = _make_reader(tmp_path)
     mmap_path = (tmp_path / "camera_h_depth.npz").with_suffix(
