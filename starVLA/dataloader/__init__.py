@@ -35,6 +35,43 @@ def save_dataset_statistics(dataset_statistics, run_dir):
 
 def build_dataloader(cfg, dataset_py="lerobot_datasets_oxe"): # TODO now here only is get dataset, we need mv dataloader to here
 
+    if dataset_py == "arx_cot_lerobot_datasets":
+        from starVLA.dataloader.arx_cot_lerobot_datasets import (
+            collate_fn,
+            get_vla_dataset,
+        )
+
+        vla_dataset_cfg = cfg.datasets.vla_data
+        vla_dataset = get_vla_dataset(
+            data_cfg=vla_dataset_cfg,
+            balance_dataset_weights=vla_dataset_cfg.get(
+                "balance_dataset_weights", False
+            ),
+            balance_trajectory_weights=vla_dataset_cfg.get(
+                "balance_trajectory_weights", False
+            ),
+        )
+        num_workers = int(vla_dataset_cfg.get("num_workers", 4))
+        dataloader_kwargs = {
+            "batch_size": vla_dataset_cfg.per_device_batch_size,
+            "collate_fn": collate_fn,
+            "num_workers": num_workers,
+            "pin_memory": bool(vla_dataset_cfg.get("pin_memory", True)),
+        }
+        if num_workers > 0:
+            dataloader_kwargs["persistent_workers"] = bool(
+                vla_dataset_cfg.get("persistent_workers", True)
+            )
+            dataloader_kwargs["prefetch_factor"] = int(
+                vla_dataset_cfg.get("prefetch_factor", 2)
+            )
+        loader = DataLoader(vla_dataset, **dataloader_kwargs)
+        if not dist.is_initialized() or dist.get_rank() == 0:
+            vla_dataset.save_dataset_statistics(
+                Path(cfg.output_dir) / "dataset_statistics.json"
+            )
+        return loader
+
     if dataset_py == "calvin_lerobot_datasets":
         from starVLA.dataloader.calvin_lerobot_datasets import get_vla_dataset, collate_fn
         vla_dataset_cfg = cfg.datasets.vla_data

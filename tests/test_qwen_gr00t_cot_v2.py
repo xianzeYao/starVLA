@@ -6,7 +6,11 @@ from types import MethodType, SimpleNamespace
 
 import starVLA.model.framework.VLM4A.QwenGR00TCoTV2 as cot_v2_module
 from starVLA.model.framework.VLM4A.QwenGR00T import Qwen_GR00T
-from starVLA.model.framework.VLM4A.QwenGR00TCoTV2 import GeometryHiddenSplit, Qwen_GR00T_CoT_V2
+from starVLA.model.framework.VLM4A.QwenGR00TCoTV2 import (
+    GeometryHiddenSplit,
+    Qwen_GR00T_CoT_V2,
+    _require_nonnegative_integer_option,
+)
 from starVLA.model.modules.action_model.GR00T_ActionHeader import FlowmatchingActionHead
 from starVLA.model.modules.geometric_cot_v2 import (
     GeometryTokenLayout,
@@ -40,6 +44,36 @@ def make_uninitialized_model(
     model.trace_coordinate_mode = "uvd"
     model.trace_coordinate_dim = 3
     return model
+
+
+def test_v2_main_depth_tokens_select_configured_third_image_span():
+    model = make_uninitialized_model()
+    model.depth_source_view_index = 2
+    model.qwen_vl_interface = SimpleNamespace(
+        model=SimpleNamespace(config=SimpleNamespace(image_token_id=5))
+    )
+    input_ids = torch.tensor(
+        [[9, 5, 5, 8, 5, 5, 7, 5, 5, 6]],
+        dtype=torch.long,
+    )
+    hidden = torch.arange(10, dtype=torch.float32).view(1, 10, 1)
+
+    selected, patch_hw = model._main_image_tokens(hidden, input_ids)
+
+    assert selected.flatten().tolist() == [7.0, 8.0]
+    assert patch_hw == (1, 2)
+
+
+def test_v2_depth_source_view_index_requires_nonnegative_integer():
+    assert _require_nonnegative_integer_option(
+        2,
+        name="depth_source_view_index",
+    ) == 2
+    with pytest.raises(ValueError, match="non-negative integer"):
+        _require_nonnegative_integer_option(
+            -1,
+            name="depth_source_view_index",
+        )
 
 
 def test_v2_is_registered_and_inherits_baseline_without_v1_reasoner():

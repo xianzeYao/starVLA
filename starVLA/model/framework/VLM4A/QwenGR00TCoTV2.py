@@ -152,6 +152,24 @@ def _require_boolean_option(value: Any, *, name: str) -> bool:
     return value
 
 
+def _require_nonnegative_integer_option(value: Any, *, name: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(
+            f"{name} must be a non-negative integer, got {value!r}"
+        )
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{name} must be a non-negative integer, got {value!r}"
+        ) from exc
+    if parsed < 0 or parsed != value:
+        raise ValueError(
+            f"{name} must be a non-negative integer, got {value!r}"
+        )
+    return parsed
+
+
 def _extract_contiguous_runs(input_ids: torch.Tensor, token_id: int) -> list[torch.Tensor]:
     positions = torch.nonzero(input_ids == int(token_id), as_tuple=False).flatten()
     if positions.numel() == 0:
@@ -183,6 +201,10 @@ class Qwen_GR00T_CoT_V2(Qwen_GR00T):
     def __init__(self, config=None, **kwargs) -> None:
         super().__init__(config=config, **kwargs)
         geometry = self.config.framework.get("geometry", {})
+        self.depth_source_view_index = _require_nonnegative_integer_option(
+            geometry.get("depth_source_view_index", 0),
+            name="depth_source_view_index",
+        )
         self.include_depth_in_action_condition = _require_boolean_option(
             geometry.get("include_depth_in_action_condition", False),
             name="include_depth_in_action_condition",
@@ -645,7 +667,7 @@ class Qwen_GR00T_CoT_V2(Qwen_GR00T):
         return self._image_tokens(
             native_hidden,
             input_ids,
-            view_index=0,
+            view_index=self.depth_source_view_index,
             view_name="main",
         )
 
