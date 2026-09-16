@@ -88,16 +88,18 @@ def prepare_data(cfg, accelerator, output_dir) -> DataLoader:
 def setup_optimizer_and_scheduler(model, cfg) -> Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler._LRScheduler]:
     """Set optimizer and scheduler."""
     param_groups = build_param_lr_groups(model=model, cfg=cfg)
+    optimizer_fused = bool(cfg.trainer.optimizer.get("fused", True))
     optimizer = torch.optim.AdamW(
         param_groups,
         lr=cfg.trainer.learning_rate.base,
         betas=tuple(cfg.trainer.optimizer.betas),
         weight_decay=cfg.trainer.optimizer.weight_decay,
         eps=cfg.trainer.optimizer.eps,
-        fused=True,
+        fused=optimizer_fused,
     )
 
     if dist.is_initialized() and dist.get_rank() == 0:
+        logger.info(f"AdamW fused={optimizer_fused}")
         for group in optimizer.param_groups:
             logger.info(f"LR Group {group['name']}: lr={group['lr']}, num_params={len(group['params'])}")
 

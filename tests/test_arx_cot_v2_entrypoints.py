@@ -10,6 +10,7 @@ import torch
 from omegaconf import OmegaConf
 
 from starVLA.training.train_starvla import VLATrainer
+from starVLA.training import train_starvla
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,6 +72,7 @@ def test_arx_q32_nodepthcond_yaml_has_fixed_robot_and_geometry_contract():
     assert cfg.trainer.max_train_steps == 80000
     assert cfg.trainer.save_interval == 40000
     assert cfg.trainer.skip_final_step_checkpoint is True
+    assert cfg.trainer.optimizer.fused is False
 
 
 def test_arx_v2_config_differs_only_in_dataset_identity():
@@ -86,6 +88,47 @@ def test_arx_v2_config_differs_only_in_dataset_identity():
     del v1.run_id
     del v2.run_id
     assert v1 == v2
+
+
+def test_optimizer_honors_explicit_unfused_setting(monkeypatch):
+    captured = {}
+
+    def fake_adamw(param_groups, **kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        train_starvla,
+        "build_param_lr_groups",
+        lambda model, cfg: [],
+    )
+    monkeypatch.setattr(torch.optim, "AdamW", fake_adamw)
+    monkeypatch.setattr(
+        train_starvla,
+        "get_scheduler",
+        lambda **kwargs: object(),
+    )
+    cfg = OmegaConf.create(
+        {
+            "trainer": {
+                "learning_rate": {"base": 1.0e-5},
+                "optimizer": {
+                    "betas": [0.9, 0.95],
+                    "weight_decay": 1.0e-8,
+                    "eps": 1.0e-8,
+                    "fused": False,
+                },
+                "lr_scheduler_type": "cosine_with_min_lr",
+                "num_warmup_steps": 5000,
+                "max_train_steps": 80000,
+                "scheduler_specific_kwargs": {"min_lr": 5.0e-7},
+            }
+        }
+    )
+
+    train_starvla.setup_optimizer_and_scheduler(model=object(), cfg=cfg)
+
+    assert captured["fused"] is False
 
 
 def test_arx_launcher_dry_run_forwards_runtime_paths_and_process_settings():
