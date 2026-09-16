@@ -21,8 +21,8 @@
   enabled.
 - Depth tokens are not included in the action condition.
 - UVD contains bilateral tracks in `[left, right]` order, with
-  `(u, v, depth_m)` for each hand. Horizon 50 uses 17 temporal points per
-  hand (`floor(50 * 0.3) + 2`), for 34 UVD latent tokens total.
+  `(u, v, depth_m)` for each hand. Horizon 30 uses 11 temporal points per
+  hand (`floor(30 * 0.3) + 2`), for 22 UVD latent tokens total.
   Short tail windows repeat the terminal frame to keep this shape fixed.
 - Raw state/action order:
   `[left_6, left_gripper, right_6, right_gripper]`.
@@ -30,7 +30,7 @@
   `[left_6, right_6, left_gripper, right_gripper]`.
 - Both grippers are continuous values. State and action use min-max
   normalization.
-- Action dimension: 14. State dimension: 14. Horizon: 50.
+- Action dimension: 14. State dimension: 14. Horizon: 30.
 - Vision target tokens: q32. CoT version: V2. Action conditioning:
   nodepthcond.
 - Per-device batch: 16; 4 GPUs; global batch: 64; gradient accumulation: 1.
@@ -141,19 +141,20 @@ The same values can be changed directly in the YAML under
 
 ## Verified behavior and performance
 
-- v1 reader: 26,720 samples, three 224x224 RGB images, action `(50, 14)`,
-  future depth `(1, 224, 224)`, UVD `(17, 2, 3)`.
+- v1 reader: 26,720 samples, three 224x224 RGB images, action `(30, 14)`,
+  future depth `(1, 224, 224)`, UVD `(11, 2, 3)`.
 - v2 reader: 38,772 samples with the same tensor contract.
 - DataLoader uses `pyav`, 8 workers per rank, persistent workers, and
   prefetch factor 2.
-- After mmap generation, measured training data time was approximately
+- With the previous horizon-50 configuration, after mmap generation, measured
+  training data time was approximately
   0.001 seconds per optimizer step. End-to-end model time was approximately
   2.45-2.50 seconds per step on four A800 80GB GPUs.
-- Reaching 1.5 seconds per step would require a training-definition or
-  allocation change, such as fewer diffusion repeats, freezing part of the
-  VLM, or assigning more GPUs. Do not change these silently.
+- The horizon-30 configuration has not yet been benchmarked end-to-end;
+  the horizon-50 timing above must not be treated as its expected step time.
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` is set by both launchers
-  to prevent the backward-pass fragmentation OOM seen with batch 16/horizon 50.
+  to prevent the backward-pass fragmentation OOM previously seen with batch
+  16/horizon 50.
 
 ## Verification notes
 

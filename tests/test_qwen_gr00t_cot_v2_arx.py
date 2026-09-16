@@ -19,7 +19,7 @@ def _valid_config():
                 "action_model": {
                     "action_dim": 14,
                     "state_dim": 14,
-                    "action_horizon": 50,
+                    "action_horizon": 30,
                 },
                 "geometry": {
                     "uvd_hand_count": 2,
@@ -51,7 +51,7 @@ def test_arx_framework_defaults_geometry_to_third_image():
     [
         ("framework.action_model.action_dim", 13, "action_dim=14"),
         ("framework.action_model.state_dim", 13, "state_dim=14"),
-        ("framework.action_model.action_horizon", 16, "action_horizon=50"),
+        ("framework.action_model.action_horizon", 16, "action_horizon=30"),
         ("framework.geometry.uvd_hand_count", 1, "uvd_hand_count=2"),
         (
             "framework.geometry.depth_source_view_index",

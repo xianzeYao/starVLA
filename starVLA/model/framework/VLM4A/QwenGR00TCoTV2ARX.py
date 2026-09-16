@@ -40,7 +40,7 @@ class Qwen_GR00T_CoT_V2_ARX(Qwen_GR00T_CoT_V2):
             (
                 "action_horizon",
                 int(action_model.action_horizon),
-                50,
+                30,
             ),
             (
                 "uvd_hand_count",

@@ -43,14 +43,14 @@ def test_arx_q32_nodepthcond_yaml_has_fixed_robot_and_geometry_contract():
     action = cfg.framework.action_model
     assert action.action_dim == 14
     assert action.state_dim == 14
-    assert action.action_horizon == 50
+    assert action.action_horizon == 30
     assert action.num_target_vision_tokens == 32
 
     geometry = cfg.framework.geometry
     assert geometry.depth_source_view_index == 2
     assert geometry.uvd_hand_count == 2
-    assert geometry.uvd_num_points == 17
-    assert geometry.uvd_num_points * geometry.uvd_hand_count == 34
+    assert geometry.uvd_num_points == 11
+    assert geometry.uvd_num_points * geometry.uvd_hand_count == 22
     assert geometry.enable_current_depth is False
     assert geometry.enable_future_depth is True
     assert geometry.reconstruct_wrist_depth is False
@@ -63,8 +63,8 @@ def test_arx_q32_nodepthcond_yaml_has_fixed_robot_and_geometry_contract():
     assert data.action_mode == "abs"
     assert data.include_state is False
     assert data.CoT_prompt == "Your task is {instruction}."
-    assert data.cot_geometry.action_horizon == 50
-    assert data.cot_geometry.uvd_num_points == 17
+    assert data.cot_geometry.action_horizon == 30
+    assert data.cot_geometry.uvd_num_points == 11
     assert data.cot_geometry.terminal_repeat is True
     assert data.per_device_batch_size == 16
     assert data.video_backend == "pyav"
