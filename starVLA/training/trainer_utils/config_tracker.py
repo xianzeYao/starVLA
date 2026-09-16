@@ -492,19 +492,24 @@ _original_is_config = OmegaConf.is_config
 _original_merge = OmegaConf.merge
 
 
-def _patched_to_container(cfg, resolve=True, enum_to_str=False, structured_config_mode=None):
+def _patched_to_container(
+    cfg, resolve=True, enum_to_str=False, structured_config_mode=None,
+    *, throw_on_missing=False,
+):
     """Patched OmegaConf.to_container that handles AccessTrackedConfig"""
     if isinstance(cfg, AccessTrackedConfig):
         cfg = cfg.unwrap()
     
-    try:
-        if structured_config_mode is not None:
-            return _original_to_container(cfg, resolve=resolve, enum_to_str=enum_to_str, 
-                                         structured_config_mode=structured_config_mode)
-        else:
-            return _original_to_container(cfg, resolve=resolve, enum_to_str=enum_to_str)
-    except TypeError:
-        return _original_to_container(cfg, resolve=resolve)
+    # OmegaConf.to_object delegates here with throw_on_missing=True and
+    # SCMode.INSTANTIATE. Preserve both instead of falling back to a dict or
+    # swallowing TypeError raised inside a structured config constructor.
+    kwargs = dict(
+        resolve=resolve, enum_to_str=enum_to_str,
+        throw_on_missing=throw_on_missing,
+    )
+    if structured_config_mode is not None:
+        kwargs["structured_config_mode"] = structured_config_mode
+    return _original_to_container(cfg, **kwargs)
 
 
 def _patched_save(config, f, resolve=False):
