@@ -71,6 +71,7 @@ def test_arx_q32_nodepthcond_yaml_has_fixed_robot_and_geometry_contract():
     assert data.num_workers == 8
     assert cfg.trainer.max_train_steps == 80000
     assert cfg.trainer.save_interval == 40000
+    assert list(cfg.trainer.save_steps) == [40000, 60000]
     assert cfg.trainer.skip_final_step_checkpoint is True
     assert cfg.trainer.optimizer.fused is False
 
@@ -220,7 +221,13 @@ def test_arx_launchers_default_expandable_cuda_allocator(launcher, tmp_path):
 
 
 class _OneStepCheckpointTrainer(VLATrainer):
-    def __init__(self, output_dir, *, skip_final_step_checkpoint=None):
+    def __init__(
+        self,
+        output_dir,
+        *,
+        skip_final_step_checkpoint=None,
+        save_steps=None,
+    ):
         trainer_config = {
             "max_train_steps": 80000,
             "save_interval": 40000,
@@ -230,6 +237,8 @@ class _OneStepCheckpointTrainer(VLATrainer):
             trainer_config["skip_final_step_checkpoint"] = (
                 skip_final_step_checkpoint
             )
+        if save_steps is not None:
+            trainer_config["save_steps"] = save_steps
         self.config = OmegaConf.create(
             {
                 "output_dir": str(output_dir),
@@ -317,3 +326,16 @@ def test_skip_final_step_checkpoint_keeps_intermediate_periodic_save(tmp_path):
     trainer.completed_steps = 40000
 
     assert trainer._should_save_periodic_checkpoint() is True
+
+
+def test_explicit_periodic_save_steps_excludes_20k_and_final_80k(tmp_path):
+    trainer = _OneStepCheckpointTrainer(
+        tmp_path,
+        skip_final_step_checkpoint=True,
+        save_steps=[40000, 60000],
+    )
+
+    expected = {20000: False, 40000: True, 60000: True, 80000: False}
+    for step, should_save in expected.items():
+        trainer.completed_steps = step
+        assert trainer._should_save_periodic_checkpoint() is should_save

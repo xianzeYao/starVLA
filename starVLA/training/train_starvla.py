@@ -332,10 +332,13 @@ class VLATrainer(TrainerUtils):
 
     def _should_save_periodic_checkpoint(self) -> bool:
         """Return whether this step should write a periodic checkpoint."""
-        if (
-            self.completed_steps <= 0
-            or self.completed_steps % self.config.trainer.save_interval != 0
-        ):
+        if self.completed_steps <= 0:
+            return False
+        save_steps = self.config.trainer.get("save_steps")
+        if save_steps is not None:
+            if self.completed_steps not in save_steps:
+                return False
+        elif self.completed_steps % self.config.trainer.save_interval != 0:
             return False
         return not (
             bool(

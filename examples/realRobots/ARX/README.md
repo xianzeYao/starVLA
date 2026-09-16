@@ -14,11 +14,11 @@ This path trains `QwenCoTv2_arx` on the public v1 and v2 sweep datasets:
 - Raw state/action order: `[left_6, left_gripper, right_6, right_gripper]`.
 - Model state/action order: `[left_6, right_6, left_gripper, right_gripper]`.
 - Both grippers are continuous joint values normalized with `min_max`.
-- Action horizon: 50.
+- Action horizon: 30.
 - Only future `camera_h` depth is reconstructed; current depth is disabled.
 - Depth is excluded from the action condition; `camera_h` UVD remains in it.
-- Four GPUs, per-device batch 16, 80k steps, one periodic checkpoint at 40k;
-  the duplicate 80k periodic save is skipped and `final_model` keeps 80k.
+- Four GPUs, per-device batch 16, 80k steps, periodic checkpoints at 40k and
+  60k; the duplicate 80k periodic save is skipped and `final_model` keeps 80k.
 - Data loading uses depth mmap sidecars, PyAV, and 8 workers per rank.
 
 ## Download and prepare
