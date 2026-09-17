@@ -158,6 +158,7 @@ def test_smoke_replays_v2_data_without_importing_robot_code(monkeypatch, tmp_pat
     assert calls[0][1] == "Sweep the green cub into the U-shaped target area."
     assert "arx_ros2_env" not in sys.modules
     assert json.loads((tmp_path / "summary.json").read_text())["queries"] == 1
+    assert (tmp_path / "action_alignment.png").is_file()
 
 
 def test_action_shape_follows_server_chunk_size_not_hardcoded_30():
@@ -167,3 +168,21 @@ def test_action_shape_follows_server_chunk_size_not_hardcoded_30():
     response = {"status": "ok", "ok": True, "data": {"actions": actions}}
     assert parse_actions(response, action_chunk_size=12).shape == (12, 14)
     assert selected_action_count(action_chunk_size=12, execute_horizon=10) == 10
+
+
+def test_smoke_alignment_figure_has_14_named_gt_prediction_panels():
+    import matplotlib.pyplot as plt
+    from deployment.model_server.arx4cot.client_policy_arx_smoke import make_action_alignment_figure
+
+    gt = np.tile(np.arange(14, dtype=np.float32), (2, 1))
+    pred = gt + 1
+    names = [f"joint_{index}" for index in range(14)]
+    figure = make_action_alignment_figure(gt, pred, names, fps=20)
+    try:
+        assert len(figure.axes) == 14
+        assert figure.axes[0].get_ylabel() == "joint_0"
+        np.testing.assert_allclose(figure.axes[0].lines[0].get_xdata(), [0, 0.05])
+        np.testing.assert_array_equal(figure.axes[0].lines[0].get_ydata(), [0, 0])
+        np.testing.assert_array_equal(figure.axes[13].lines[1].get_ydata(), [14, 14])
+    finally:
+        plt.close(figure)

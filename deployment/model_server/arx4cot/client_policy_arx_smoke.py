@@ -17,6 +17,31 @@ else:
     from dataset_reader import RecordedEpisode
 
 
+
+def make_action_alignment_figure(
+    gt_actions: np.ndarray,
+    pred_actions: np.ndarray,
+    action_names: list[str],
+    fps: float,
+):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    time_s = np.arange(len(gt_actions), dtype=np.float32) / fps
+    figure, axes = plt.subplots(14, 1, figsize=(14, 31), sharex=True)
+    for dim, axis in enumerate(axes):
+        axis.plot(time_s, gt_actions[:, dim], label="GT", linewidth=1.2)
+        axis.plot(time_s, pred_actions[:, dim], label="Prediction", linewidth=1.0)
+        axis.set_ylabel(action_names[dim])
+        axis.grid(alpha=0.25)
+    axes[0].legend(loc="upper right")
+    axes[-1].set_xlabel("Time (s)")
+    figure.tight_layout()
+    return figure
+
+
 def build_argparser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_root", required=True)
@@ -77,6 +102,16 @@ def run_smoke_test(args: argparse.Namespace) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     (output_dir / "records.json").write_text(json.dumps(records, indent=2))
+    info = json.loads((Path(args.dataset_root) / "meta" / "info.json").read_text())
+    figure = make_action_alignment_figure(
+        gt, pred, info["features"]["action"]["names"], float(info["fps"])
+    )
+    try:
+        figure.savefig(output_dir / "action_alignment.png", dpi=160)
+    finally:
+        import matplotlib.pyplot as plt
+
+        plt.close(figure)
     return summary
 
 
