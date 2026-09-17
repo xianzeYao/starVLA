@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -98,7 +99,10 @@ def run_smoke_test(args: argparse.Namespace) -> dict:
         "execute_horizon": args.execute_horizon,
         "mae_per_dim": np.abs(gt - pred).mean(axis=0).tolist(),
     }
-    output_dir = Path(args.output_dir)
+    output_dir = Path(args.output_dir) / (
+        f"{Path(args.dataset_root).name}_ep{args.episode_index:03d}_"
+        f"{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     (output_dir / "records.json").write_text(json.dumps(records, indent=2))

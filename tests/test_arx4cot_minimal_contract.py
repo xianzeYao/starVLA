@@ -130,6 +130,7 @@ def test_recorded_episode_reads_v1_and_v2_task_rgb_and_action():
 
 def test_smoke_replays_v2_data_without_importing_robot_code(monkeypatch, tmp_path):
     import json
+    import re
     import sys
     from argparse import Namespace
     from pathlib import Path
@@ -157,8 +158,14 @@ def test_smoke_replays_v2_data_without_importing_robot_code(monkeypatch, tmp_pat
     assert len(calls[0][0]) == 3
     assert calls[0][1] == "Sweep the green cub into the U-shaped target area."
     assert "arx_ros2_env" not in sys.modules
-    assert json.loads((tmp_path / "summary.json").read_text())["queries"] == 1
-    assert (tmp_path / "action_alignment.png").is_file()
+    run_dirs = list(tmp_path.iterdir())
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+    assert run_dir.is_dir()
+    assert re.fullmatch(r"arx_cot_sweep_v2_lerobot_ep000_\d{8}_\d{6}", run_dir.name)
+    assert json.loads((run_dir / "summary.json").read_text())["queries"] == 1
+    assert (run_dir / "records.json").is_file()
+    assert (run_dir / "action_alignment.png").is_file()
 
 
 def test_action_shape_follows_server_chunk_size_not_hardcoded_30():
