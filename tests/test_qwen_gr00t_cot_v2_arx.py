@@ -46,12 +46,42 @@ def test_arx_framework_defaults_geometry_to_third_image():
     assert config.framework.geometry.depth_source_view_index == 2
 
 
+def test_arx_framework_accepts_a_matching_positive_40_step_horizon():
+    config = _valid_config()
+    OmegaConf.update(config, "framework.action_model.action_horizon", 40)
+    OmegaConf.update(
+        config,
+        "datasets.vla_data.cot_geometry.action_horizon",
+        40,
+    )
+
+    Qwen_GR00T_CoT_V2_ARX._apply_arx_defaults(config)
+    Qwen_GR00T_CoT_V2_ARX._validate_arx_config(config)
+
+
+def test_arx_framework_rejects_horizon_mismatched_with_dataset():
+    config = _valid_config()
+    OmegaConf.update(config, "framework.action_model.action_horizon", 40)
+    OmegaConf.update(
+        config,
+        "datasets.vla_data.cot_geometry.action_horizon",
+        39,
+    )
+
+    Qwen_GR00T_CoT_V2_ARX._apply_arx_defaults(config)
+    with pytest.raises(
+        ValueError,
+        match=r"action_horizon.*datasets\.vla_data",
+    ):
+        Qwen_GR00T_CoT_V2_ARX._validate_arx_config(config)
+
+
 @pytest.mark.parametrize(
     ("path", "value", "message"),
     [
         ("framework.action_model.action_dim", 13, "action_dim=14"),
         ("framework.action_model.state_dim", 13, "state_dim=14"),
-        ("framework.action_model.action_horizon", 16, "action_horizon=30"),
+        ("framework.action_model.action_horizon", 0, "positive"),
         ("framework.geometry.uvd_hand_count", 1, "uvd_hand_count=2"),
         (
             "framework.geometry.depth_source_view_index",

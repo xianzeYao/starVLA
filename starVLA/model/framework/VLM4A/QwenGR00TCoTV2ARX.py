@@ -38,11 +38,6 @@ class Qwen_GR00T_CoT_V2_ARX(Qwen_GR00T_CoT_V2):
                 14,
             ),
             (
-                "action_horizon",
-                int(action_model.action_horizon),
-                30,
-            ),
-            (
                 "uvd_hand_count",
                 int(geometry.uvd_hand_count),
                 2,
@@ -57,6 +52,23 @@ class Qwen_GR00T_CoT_V2_ARX(Qwen_GR00T_CoT_V2):
             if actual != expected:
                 raise ValueError(
                     f"QwenCoTv2_arx requires {name}={expected}, got {actual}"
+                )
+        action_horizon = int(action_model.action_horizon)
+        if action_horizon <= 0:
+            raise ValueError(
+                "QwenCoTv2_arx requires a positive action_horizon, "
+                f"got {action_horizon}"
+            )
+        datasets = getattr(config, "datasets", None)
+        vla_data = getattr(datasets, "vla_data", None)
+        cot_geometry = getattr(vla_data, "cot_geometry", None)
+        if cot_geometry is not None and "action_horizon" in cot_geometry:
+            dataset_horizon = int(cot_geometry.action_horizon)
+            if dataset_horizon != action_horizon:
+                raise ValueError(
+                    "QwenCoTv2_arx requires action_horizon to match "
+                    "datasets.vla_data.cot_geometry.action_horizon, got "
+                    f"{action_horizon} and {dataset_horizon}"
                 )
         if bool(geometry.get("reconstruct_wrist_depth", False)):
             raise ValueError(
