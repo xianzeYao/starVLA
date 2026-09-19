@@ -20,3 +20,28 @@ def stage_variant(row: dict) -> dict:
         "depth_consistency_error_mm": depth if depth is not None else "—",
         "uvd_consistency_error": row.get("uvd", "—") if row.get("uvd") is not None else "—",
     }
+
+
+
+def stage_existing_evidence(output_root: Path, *, sources: dict) -> None:
+    """Write compact formal metrics and source provenance without touching sources."""
+    import csv
+    import json
+
+    output_root = Path(output_root)
+    manifest_root = output_root / "manifests"
+    metric_root = output_root / "metrics"
+    manifest_root.mkdir(parents=True, exist_ok=True)
+    metric_root.mkdir(parents=True, exist_ok=True)
+    source_paths = {name: value["path"] for name, value in sources.items()}
+    (manifest_root / "sources.json").write_text(
+        json.dumps(build_sources_manifest(source_paths), indent=2, sort_keys=True) + "\n"
+    )
+    rows = []
+    for name, value in sorted(sources.items()):
+        rows.append(stage_variant({"name": name, **dict(value.get("summary", {}))}))
+    fields = ["variant", "sr_percent", "uv_consistency_error_px", "depth_consistency_error_mm", "uvd_consistency_error"]
+    with (metric_root / "robocasa_rq3_variants.csv").open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
