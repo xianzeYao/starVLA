@@ -285,3 +285,10 @@ def test_arx_registry_exposes_training_mixture_and_continuous_dimensions():
     assert DATASET_NAMED_MIXTURES["arx_cot_sweep_v2"] == [
         ("arx_cot_sweep_v2_lerobot", 1.0, "arx_cot")
     ]
+
+
+def test_arx_cube_v3_mix_resolves_to_arx_for_deployment_normalization():
+    from deployment.model_server.policy_norm_processor import _resolve_robot_type
+
+    cfg = {"datasets": {"vla_data": {"data_mix": "cot_cube_v3"}}}
+    assert _resolve_robot_type(cfg) == "arx_cot"
