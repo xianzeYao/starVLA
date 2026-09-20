@@ -100,7 +100,7 @@ def test_arx_cube_v3_entrypoint_uses_a_consistent_40_step_contract():
     assert CUBE_V3_LAUNCHER.is_file()
 
 
-def test_arx_box_entrypoint_preserves_the_dual_arm_50_step_contract():
+def test_arx_box_entrypoint_preserves_the_dual_arm_40_step_contract():
     config_path = (
         ROOT
         / "examples/modelExtensions/CoT/configs"
@@ -117,9 +117,9 @@ def test_arx_box_entrypoint_preserves_the_dual_arm_50_step_contract():
     cfg = OmegaConf.load(config_path)
 
     assert cfg.framework.name == "QwenCoTv2_arx"
-    assert cfg.framework.action_model.action_horizon == 50
-    assert cfg.datasets.vla_data.cot_geometry.action_horizon == 50
-    assert cfg.framework.geometry.uvd_num_points == 17
+    assert cfg.framework.action_model.action_horizon == 40
+    assert cfg.datasets.vla_data.cot_geometry.action_horizon == 40
+    assert cfg.framework.geometry.uvd_num_points == 14
     assert cfg.framework.geometry.uvd_hand_count == 2
     assert cfg.datasets.vla_data.dataset_name == "arx_cot_box"
     assert cfg.datasets.vla_data.data_mix == "arx_cot_box"
