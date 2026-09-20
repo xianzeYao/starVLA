@@ -229,6 +229,26 @@ class SimulationInferenceEnv:
                             }
                         )
                         pending_trace_records[env_idx].append(trace_record)
+                    if os.getenv("CAPTURE_GEOMETRY_ASSETS") == "1" and trace_record is not None:
+                        from examples.simBenchmarks.Robocasa_tabletop.eval_files.geometry_assets import (
+                            model_rgb_224, render_endpoint_depth_m, write_geometry_asset,
+                        )
+                        direct = trace_record["direct"]
+                        endpoint_env = self.env.envs[env_idx]
+                        predicted_depth = np.asarray(geometry["depth_future"])[env_idx]
+                        write_geometry_asset(
+                            os.environ["CAPTURE_GEOMETRY_ASSET_DIR"],
+                            task_index=int(config.task_index),
+                            episode_index=int(trace_episode_ids[env_idx]),
+                            decision_index=int(trace_decision_indices[env_idx]),
+                            rgb=model_rgb_224(obs, env_idx, config.trace_image_size),
+                            predicted_depth_m=predicted_depth,
+                            gt_depth_m=render_endpoint_depth_m(endpoint_env, config.trace_image_size),
+                            predicted_uvd=np.asarray(direct["predicted_uvd"]),
+                            realized_uvd=np.asarray(direct["realized_uvd"]),
+                            direct_offsets=np.asarray(direct["offsets"]),
+                            direct_valid=np.asarray(direct["valid"]),
+                        )
                     trace_decision_indices[env_idx] += 1
                 current_successes[env_idx] |= bool(env_infos["success"][env_idx][0])
                 current_rewards[env_idx] += rewards[env_idx]
@@ -517,6 +537,7 @@ def eval_gr1_unified(args: Args) -> None:
         "scene_seed_scheme": SCENE_SEED_SCHEME,
     }
     try:
+        capture_geometry_assets = os.getenv("CAPTURE_GEOMETRY_ASSETS") == "1"
         model = PolicyWarper(
             policy_ckpt_path=args.pretrained_path,  # to get unnormalization stats
             unnorm_key=args.unnorm_key,
@@ -529,7 +550,10 @@ def eval_gr1_unified(args: Args) -> None:
                 args.trace_consistency_output is not None
                 or args.rollout_features_output is not None
             ),
-            geometry_uvd_only=(args.trace_consistency_output is not None or args.rollout_features_output is not None),
+            geometry_uvd_only=(
+                (args.trace_consistency_output is not None or args.rollout_features_output is not None)
+                and not capture_geometry_assets
+            ),
             return_rollout_features=args.rollout_features_output is not None,
         )
         run_evaluation(

@@ -4,6 +4,7 @@
 # Design and Merged by [Jinhui YE / HKUST University] in [2026].
 
 from typing import Optional
+import os
 
 import torch
 from starVLA.training.trainer_utils import initialize_overwatch
@@ -82,6 +83,7 @@ class _QWen3_5_VL_Interface(nn.Module):
 
         qwenvl_config = config.framework.get("qwenvl", {})
         model_id = qwenvl_config.get("base_vlm", "Qwen/Qwen3.5-VL-4B-Instruct")
+        model_id = os.environ.get("COT_BASE_VLM_OVERRIDE", model_id)
         attn_implementation = qwenvl_config.get("attn_implementation", "sdpa")
 
         if attn_implementation in {"flash_attention_2", "flash_attention_3"}:

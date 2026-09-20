@@ -27,6 +27,12 @@ def ensure_addict_compatibility() -> None:
         def __setattr__(self, name, value):
             self[name] = value
 
+        def __delattr__(self, name):
+            try:
+                del self[name]
+            except KeyError as exc:
+                raise AttributeError(name) from exc
+
     module = types.ModuleType("addict")
     module.Dict = AttributeDict
     sys.modules.setdefault("addict", module)

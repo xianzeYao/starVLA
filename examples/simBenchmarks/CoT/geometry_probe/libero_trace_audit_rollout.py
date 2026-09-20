@@ -378,9 +378,18 @@ def _geometry(geometry: object) -> dict[str, np.ndarray]:
     uvd = squeeze_batch(geometry["uvd"], "uvd")
     times = squeeze_batch(geometry["uvd_time"], "uvd_time")
     landmark_ids = squeeze_batch(geometry["uvd_landmark_ids"], "uvd_landmark_ids")
-    if uvd.ndim != 2 or len(uvd) % 3:
-        raise ValueError("invalid V3 UVD response shape")
-    points = len(uvd) // 3
+    if uvd.ndim != 2 or uvd.shape[1] != 3 or times.shape != (len(uvd),):
+        raise ValueError("invalid UVD response shape")
+    if landmark_ids.shape != times.shape or not np.issubdtype(landmark_ids.dtype, np.integer):
+        raise ValueError("invalid UVD landmark metadata")
+    source_landmarks = int(np.max(landmark_ids)) + 1
+    if source_landmarks not in {1, 3} or len(uvd) % source_landmarks:
+        raise ValueError("unsupported UVD landmark layout")
+    points = len(uvd) // source_landmarks
+    if source_landmarks == 1:
+        uvd = np.repeat(uvd[:, None, :], 3, axis=1).reshape(points * 3, 3)
+        times = np.repeat(times, 3)
+        landmark_ids = np.tile(np.arange(3, dtype=np.int64), points)
     canonicalize_v3_uvd(
         uvd,
         time_points=points,
@@ -397,12 +406,19 @@ def _geometry(geometry: object) -> dict[str, np.ndarray]:
             raise ValueError(f"invalid {name} dense depth shape")
         return array
 
+    future_depth = depth(geometry["depth_future"], "depth_future")
+    current_depth = (
+        np.full_like(future_depth, np.nan)
+        if geometry["depth_current"] is None
+        else depth(geometry["depth_current"], "depth_current")
+    )
     return {
         "uvd": uvd.reshape(points, 3, 3).astype(np.float32),
         "time": times.astype(np.float32),
         "ids": landmark_ids.astype(np.int64),
-        "current": depth(geometry["depth_current"], "depth_current"),
-        "future": depth(geometry["depth_future"], "depth_future"),
+        "source_landmarks": np.asarray(source_landmarks, dtype=np.int64),
+        "current": current_depth,
+        "future": future_depth,
     }
 
 
@@ -480,6 +496,25 @@ def _frame(
         & (uvd[:, 1] >= 0.0)
         & (uvd[:, 1] <= 1.0)
     )
+    eef_xyz = np.asarray(
+        observation.get("robot0_eef_pos", world_xyz[-1]), np.float32
+    ).reshape(1, 3)
+    eef_pixels, eef_valid, _ = project_world_to_agentview_uvd(
+        eef_xyz[None], camera_k, camera_pose, width=width, height=height
+    )
+    eef_uvd = np.asarray(eef_pixels[0], np.float32)
+    eef_valid = np.asarray(eef_valid[0], np.bool_)
+    eef_uvd[:, 0] = width - 1 - eef_uvd[:, 0]
+    eef_uvd[:, 0] /= width - 1
+    eef_uvd[:, 1] /= height - 1
+    eef_in_frame = (
+        eef_valid
+        & np.isfinite(eef_uvd).all(axis=1)
+        & (eef_uvd[:, 0] >= 0.0)
+        & (eef_uvd[:, 0] <= 1.0)
+        & (eef_uvd[:, 1] >= 0.0)
+        & (eef_uvd[:, 1] <= 1.0)
+    )
     return {
         "rgb": rgb,
         "wrist": wrist,
@@ -488,6 +523,10 @@ def _frame(
         "uvd": uvd.astype(np.float32),
         "valid": projection_valid,
         "in_frame": in_frame.astype(np.bool_),
+        "eef_xyz": eef_xyz,
+        "eef_uvd": eef_uvd.astype(np.float32),
+        "eef_valid": eef_valid,
+        "eef_in_frame": eef_in_frame.astype(np.bool_),
         "k": flip_camera_intrinsics(camera_k, image_size=(height, width)),
     }
 
@@ -596,8 +635,19 @@ def collect_rollout(case: object, client: object, args: object) -> RolloutRecord
         predicted_uvd = np.stack([item["uvd"] for item in predictions])
         predicted_times = np.stack([item["time"] for item in predictions])
         predicted_ids = np.stack([item["ids"] for item in predictions])
-        realized_uvd = np.stack([frame["uvd"] for frame in frames])
-        realized_valid = np.stack([frame["valid"] for frame in frames])
+        source_landmarks = int(predictions[0]["source_landmarks"])
+        if any(int(item["source_landmarks"]) != source_landmarks for item in predictions):
+            raise ValueError("geometry landmark layout changed within one rollout")
+        if source_landmarks == 1:
+            realized_uvd = np.repeat(np.stack([frame["eef_uvd"] for frame in frames]), 3, axis=1)
+            realized_xyz = np.repeat(np.stack([frame["eef_xyz"] for frame in frames]), 3, axis=1)
+            realized_valid = np.repeat(np.stack([frame["eef_valid"] for frame in frames]), 3, axis=1)
+            realized_in_frame = np.repeat(np.stack([frame["eef_in_frame"] for frame in frames]), 3, axis=1)
+        else:
+            realized_uvd = np.stack([frame["uvd"] for frame in frames])
+            realized_xyz = np.stack([frame["xyz"] for frame in frames])
+            realized_valid = np.stack([frame["valid"] for frame in frames])
+            realized_in_frame = np.stack([frame["in_frame"] for frame in frames])
         camera_k = np.asarray(frames[0]["k"], np.float32)
         targets, target_valid, metrics = complete_anchor_targets(
             predicted_uvd=predicted_uvd,
@@ -642,9 +692,9 @@ def collect_rollout(case: object, client: object, args: object) -> RolloutRecord
                 [item["future"] for item in predictions]
             ),
             realized_uvd=realized_uvd,
-            realized_xyz=np.stack([frame["xyz"] for frame in frames]),
+            realized_xyz=realized_xyz,
             realized_valid=realized_valid,
-            realized_in_frame=np.stack([frame["in_frame"] for frame in frames]),
+            realized_in_frame=realized_in_frame,
             anchor_target_uvd=targets,
             anchor_target_valid=target_valid,
             dense_depth_current_target=current_targets,
@@ -662,6 +712,7 @@ def collect_rollout(case: object, client: object, args: object) -> RolloutRecord
                 "metrics": metrics,
                 "camera_convention": CAMERA_CONVENTION,
                 "schema": RECORD_SCHEMA,
+                "source_landmark_count": source_landmarks,
             },
         )
         validate_rollout_record(record)

@@ -25,6 +25,7 @@ from starVLA.model.modules.da3_feature_alignment import (
     cosine_feature_alignment_loss,
     pool_da3_patch_features,
 )
+from starVLA.model.modules.da3_addict_compat import ensure_addict_compatibility
 from starVLA.model.tools import FRAMEWORK_REGISTRY
 
 
@@ -37,6 +38,18 @@ SCRIPT_NAME = (
     "run_qwen35_gr00t_robocasa_fourier_CoT_v2_q32_nodepthcond_"
     "da3_feature_alignment.sh"
 )
+
+
+def test_da3_addict_compatibility_supports_attribute_deletion():
+    ensure_addict_compatibility()
+    from addict import Dict
+
+    output = Dict(ray=object())
+    del output.ray
+
+    assert "ray" not in output
+    with pytest.raises(AttributeError):
+        del output.missing
 
 
 def da3_data_cfg():
