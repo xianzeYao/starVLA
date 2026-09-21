@@ -282,18 +282,52 @@ class CoTLeRobotSingleDataset(LeRobotSingleDataset):
         depth_scale = float(self._cot_option("uvd_depth_scale", 1.0))
         target_hw = (target_size, target_size)
 
+        preprocessed_depth = self._cot_option(
+            "preprocessed_depth", False
+        )
+        if not isinstance(preprocessed_depth, (bool, np.bool_)):
+            raise ValueError(
+                "preprocessed_depth must be a boolean, "
+                f"got {preprocessed_depth!r}"
+            )
+        source_height = int(depth.shape[-2])
+        source_width = int(depth.shape[-1])
+        if preprocessed_depth:
+            source_size = self._cot_option(
+                "uvd_source_image_size", None
+            )
+            try:
+                source_height, source_width = (
+                    int(value) for value in source_size
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "uvd_source_image_size must be [height, width] "
+                    "when preprocessed_depth is enabled"
+                ) from exc
+            if source_height < 2 or source_width < 2:
+                raise ValueError(
+                    "uvd_source_image_size dimensions must be at least 2"
+                )
+            if tuple(depth.shape[-2:]) != target_hw:
+                raise ValueError(
+                    "preprocessed depth must already match image_size; "
+                    f"got {tuple(depth.shape[-2:])}, expected {target_hw}"
+                )
+
         current_depth = depth[base_index]
         future_depth = depth[future_index]
         current_valid = np.isfinite(current_depth) & (current_depth > 0.0)
         future_valid = np.isfinite(future_depth) & (future_depth > 0.0)
-        current_depth, current_valid = _resize_depth(current_depth, current_valid, target_hw)
-        future_depth, future_valid = _resize_depth(future_depth, future_valid, target_hw)
+        if not preprocessed_depth:
+            current_depth, current_valid = _resize_depth(current_depth, current_valid, target_hw)
+            future_depth, future_valid = _resize_depth(future_depth, future_valid, target_hw)
 
         sampled_uvd_pixels = eef_uvd[sample_indices]
         uvd, boundary_clamp = transform_uvd_to_model_space(
             sampled_uvd_pixels,
-            source_width=int(depth.shape[-1]),
-            source_height=int(depth.shape[-2]),
+            source_width=source_width,
+            source_height=source_height,
             target_width=target_size,
             target_height=target_size,
             depth_scale=depth_scale,
@@ -303,9 +337,9 @@ class CoTLeRobotSingleDataset(LeRobotSingleDataset):
         finite_positive = np.isfinite(sampled_uvd_pixels).all(axis=-1) & (sampled_uvd_pixels[..., 2] > 0.0)
         in_frame = (
             (sampled_uvd_pixels[..., 0] >= 0.0)
-            & (sampled_uvd_pixels[..., 0] <= float(depth.shape[-1] - 1))
+            & (sampled_uvd_pixels[..., 0] <= float(source_width - 1))
             & (sampled_uvd_pixels[..., 1] >= 0.0)
-            & (sampled_uvd_pixels[..., 1] <= float(depth.shape[-2] - 1))
+            & (sampled_uvd_pixels[..., 1] <= float(source_height - 1))
         )
         out_of_frame = finite_positive & ~in_frame
         boundary_clamp = np.asarray(boundary_clamp, dtype=np.bool_) & valid

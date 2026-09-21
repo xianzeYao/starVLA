@@ -9,6 +9,8 @@ import pytest
 from examples.realRobots.ARX.train_files.prepare_arx_cot_lerobot import (
     adapt_modality_metadata,
     build_depth_mmap_cache,
+    parse_args,
+    validate_depth_mmap_caches,
     prepare_dataset,
 )
 
@@ -160,3 +162,100 @@ def test_prepare_dataset_rejects_incomplete_episode_snapshot(tmp_path: Path):
         match="episodes.jsonl lists 2 episodes but found 1 Parquet",
     ):
         prepare_dataset(tmp_path)
+
+
+def test_depth_mmap_cache_can_opt_in_to_resized_float16(tmp_path: Path):
+    _write_minimal_dataset(tmp_path)
+
+    report = build_depth_mmap_cache(
+        tmp_path,
+        target_size=2,
+        output_dtype="float16",
+    )
+
+    cache = np.load(
+        tmp_path
+        / "depth/chunk-000/observation.depth.camera_h_m"
+        / "episode_000000.depth_m.npy",
+        mmap_mode="r",
+        allow_pickle=False,
+    )
+    assert report == {"created": 1, "reused": 0}
+    assert isinstance(cache, np.memmap)
+    assert cache.shape == (2, 2, 2)
+    assert cache.dtype == np.float16
+    assert (
+        tmp_path
+        / "depth/chunk-000/observation.depth.camera_h_m"
+        / "episode_000000.npz"
+    ).is_file()
+
+
+def test_prepare_dataset_accepts_valid_mmap_after_depth_npz_removal(
+    tmp_path: Path,
+):
+    _write_minimal_dataset(tmp_path)
+    build_depth_mmap_cache(
+        tmp_path,
+        target_size=2,
+        output_dtype="float16",
+    )
+    next(tmp_path.glob("depth/**/*.npz")).unlink()
+
+    report = prepare_dataset(tmp_path, write_metadata=False)
+
+    assert report.depth_shape == (2, 2, 2)
+
+
+def test_prepare_cli_accepts_opt_in_depth_conversion(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "prepare_arx_cot_lerobot.py",
+            "--dataset-root",
+            str(tmp_path),
+            "--build-depth-mmap",
+            "--depth-target-size",
+            "224",
+            "--depth-output-dtype",
+            "float16",
+        ],
+    )
+
+    args = parse_args()
+
+    assert args.build_depth_mmap is True
+    assert args.depth_target_size == 224
+    assert args.depth_output_dtype == "float16"
+
+
+def test_depth_mmap_audit_checks_every_episode_against_parquet(tmp_path):
+    _write_minimal_dataset(tmp_path)
+    build_depth_mmap_cache(
+        tmp_path,
+        target_size=2,
+        output_dtype="float16",
+    )
+
+    report = validate_depth_mmap_caches(
+        tmp_path,
+        expected_size=2,
+        expected_dtype="float16",
+    )
+
+    assert report["episodes"] == 1
+    assert report["frames"] == 2
+    assert report["bytes"] > 0
+
+    cache_path = next(tmp_path.glob("depth/**/*.depth_m.npy"))
+    np.save(
+        cache_path,
+        np.ones((1, 2, 2), dtype=np.float16),
+        allow_pickle=False,
+    )
+    with pytest.raises(ValueError, match="frame count"):
+        validate_depth_mmap_caches(
+            tmp_path,
+            expected_size=2,
+            expected_dtype="float16",
+        )

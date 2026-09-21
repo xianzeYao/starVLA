@@ -44,6 +44,16 @@ CUBE_V3_LAUNCHER = (
     / "examples/modelExtensions/CoT/scripts"
     / "run_qwen35_gr00t_arx_cube_v3_CoT_v2_q32_nodepthcond.sh"
 )
+BRICKS_CONFIG = (
+    ROOT
+    / "examples/modelExtensions/CoT/configs"
+    / "qwen35_gr00t_arx_bricks_CoT_v2_q32_nodepthcond.yaml"
+)
+BRICKS_LAUNCHER = (
+    ROOT
+    / "examples/modelExtensions/CoT/scripts"
+    / "run_qwen35_gr00t_arx_bricks_CoT_v2_q32_nodepthcond.sh"
+)
 
 
 def test_arx_q32_nodepthcond_yaml_has_fixed_robot_and_geometry_contract():
@@ -98,6 +108,27 @@ def test_arx_cube_v3_entrypoint_uses_a_consistent_40_step_contract():
     assert cfg.framework.geometry.enable_future_depth is True
     assert cfg.framework.geometry.depth_source_view_index == 2
     assert CUBE_V3_LAUNCHER.is_file()
+
+
+def test_arx_bricks_entrypoint_uses_preprocessed_depth_and_40_step_contract():
+    cfg = OmegaConf.load(BRICKS_CONFIG)
+
+    assert cfg.framework.name == "QwenCoTv2_arx"
+    assert cfg.framework.action_model.action_horizon == 40
+    assert cfg.framework.geometry.uvd_num_points == 14
+    assert cfg.framework.geometry.uvd_hand_count == 2
+    assert cfg.datasets.vla_data.cot_geometry.action_horizon == 40
+    assert cfg.datasets.vla_data.cot_geometry.uvd_num_points == 14
+    assert cfg.datasets.vla_data.cot_geometry.preprocessed_depth is True
+    assert list(cfg.datasets.vla_data.cot_geometry.uvd_source_image_size) == [
+        480,
+        640,
+    ]
+    assert cfg.datasets.vla_data.CoT_prompt == "Your task is {instruction}."
+    assert cfg.datasets.vla_data.per_device_batch_size == 16
+    assert list(cfg.trainer.save_steps) == [40000, 60000]
+    assert cfg.trainer.skip_final_step_checkpoint is True
+    assert BRICKS_LAUNCHER.is_file()
 
 
 def test_arx_v2_config_differs_only_in_dataset_identity():

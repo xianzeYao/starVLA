@@ -191,6 +191,55 @@ def test_arx_geometry_reader_prefers_depth_mmap_cache(tmp_path, monkeypatch):
     np.testing.assert_array_equal(depth, expected)
 
 
+def test_preprocessed_depth_uses_explicit_raw_uvd_image_size(tmp_path):
+    raw_uvd = np.tile(
+        np.asarray(
+            [320.0, 240.0, 1.0, 160.0, 120.0, 2.0],
+            dtype=np.float32,
+        ),
+        (3, 1),
+    )
+    dataset = _make_reader(
+        tmp_path,
+        uvd=raw_uvd,
+        valid=np.ones((3, 2), dtype=np.bool_),
+    )
+    np.save(
+        (tmp_path / "camera_h_depth.npz").with_suffix(".depth_m.npy"),
+        np.ones((3, 2, 2), dtype=np.float16),
+        allow_pickle=False,
+    )
+    dataset._cot_current_trajectory_id = 4
+    dataset._cot_current_base_index = 0
+    dataset._cot_data_cfg = {
+        "cot_geometry": {
+            "action_horizon": 1,
+            "uvd_num_points": 2,
+            "terminal_repeat": True,
+            "image_size": 2,
+            "uvd_depth_scale": 1.0,
+            "reconstruct_wrist_depth": False,
+            "preprocessed_depth": True,
+            "uvd_source_image_size": [480, 640],
+        }
+    }
+
+    targets = dataset._geometry_targets()
+
+    np.testing.assert_allclose(
+        targets["uvd"][0, 0],
+        np.asarray([320.0 / 639.0, 240.0 / 479.0, 1.0]),
+        rtol=0.0,
+        atol=1.0e-6,
+    )
+    np.testing.assert_allclose(
+        targets["uvd"][0, 1],
+        np.asarray([160.0 / 639.0, 120.0 / 479.0, 2.0]),
+        rtol=0.0,
+        atol=1.0e-6,
+    )
+
+
 @pytest.mark.parametrize(
     ("uvd", "valid", "message"),
     [

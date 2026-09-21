@@ -133,11 +133,59 @@ def _atomic_write_json(path: Path, payload: dict) -> None:
         os.fsync(handle.fileno())
     os.replace(temp_path, path)
 
+
 def _depth_cache_path(source_path: Path) -> Path:
     return source_path.with_suffix(".depth_m.npy")
 
 
-def build_depth_mmap_cache(dataset_root: Path | str) -> dict[str, int]:
+def _resize_depth_stack(
+    source: np.ndarray,
+    *,
+    target_size: int,
+    batch_size: int = 64,
+) -> np.ndarray:
+    """Resize an episode depth stack with the training-time semantics."""
+    import torch
+    import torch.nn.functional as F
+
+    if source.ndim != 3:
+        raise ValueError(f"depth_m must have shape [T,H,W], got {source.shape}")
+    if target_size < 2:
+        raise ValueError(f"target_size must be at least 2, got {target_size}")
+    output = np.empty(
+        (len(source), target_size, target_size),
+        dtype=np.float32,
+    )
+    for start in range(0, len(source), batch_size):
+        stop = min(start + batch_size, len(source))
+        batch = np.asarray(source[start:stop], dtype=np.float32)
+        valid = np.isfinite(batch) & (batch > 0.0)
+        depth_tensor = torch.from_numpy(
+            np.nan_to_num(batch, nan=0.0)
+        )[:, None]
+        valid_tensor = torch.from_numpy(valid.astype(np.float32))[:, None]
+        resized_depth = F.interpolate(
+            depth_tensor,
+            size=(target_size, target_size),
+            mode="bilinear",
+            align_corners=False,
+        )[:, 0].numpy()
+        resized_valid = F.interpolate(
+            valid_tensor,
+            size=(target_size, target_size),
+            mode="nearest",
+        )[:, 0].numpy() > 0.5
+        resized_depth[~resized_valid] = 0.0
+        output[start:stop] = resized_depth
+    return output
+
+
+def build_depth_mmap_cache(
+    dataset_root: Path | str,
+    *,
+    target_size: int | None = None,
+    output_dtype: str | None = None,
+) -> dict[str, int]:
     """Create atomic, memory-mappable copies of camera-h episode depth."""
     root = Path(dataset_root).expanduser().resolve()
     paths = sorted(
@@ -152,6 +200,22 @@ def build_depth_mmap_cache(dataset_root: Path | str) -> dict[str, int]:
             f"no camera_h depth NPZ files found under {root / 'depth'}"
         )
 
+    requested_dtype = None
+    if output_dtype is not None:
+        try:
+            requested_dtype = np.dtype(output_dtype)
+        except TypeError as exc:
+            raise ValueError(
+                f"unsupported output dtype: {output_dtype!r}"
+            ) from exc
+        if requested_dtype not in (
+            np.dtype("float16"),
+            np.dtype("float32"),
+        ):
+            raise ValueError(
+                "output_dtype must be float16 or float32, "
+                f"got {output_dtype!r}"
+            )
     created = 0
     reused = 0
     for source_path in paths:
@@ -160,6 +224,18 @@ def build_depth_mmap_cache(dataset_root: Path | str) -> dict[str, int]:
             if "depth_m" not in payload:
                 raise KeyError(f"depth_m is missing from {source_path}")
             source = payload["depth_m"]
+            expected_shape = source.shape
+            if target_size is not None:
+                expected_shape = (
+                    len(source),
+                    int(target_size),
+                    int(target_size),
+                )
+            expected_dtype = (
+                source.dtype
+                if requested_dtype is None
+                else requested_dtype
+            )
             matches = False
             if cache_path.is_file():
                 try:
@@ -167,14 +243,27 @@ def build_depth_mmap_cache(dataset_root: Path | str) -> dict[str, int]:
                         cache_path, mmap_mode="r", allow_pickle=False
                     )
                     matches = (
-                        cached.shape == source.shape
-                        and cached.dtype == source.dtype
+                        cached.shape == expected_shape
+                        and cached.dtype == expected_dtype
                     )
                 except (OSError, ValueError):
                     matches = False
             if matches:
                 reused += 1
                 continue
+
+            if target_size is None:
+                output = source
+            else:
+                output = _resize_depth_stack(
+                    source,
+                    target_size=int(target_size),
+                )
+            if requested_dtype is not None:
+                output = output.astype(
+                    requested_dtype,
+                    copy=False,
+                )
 
             with tempfile.NamedTemporaryFile(
                 mode="wb",
@@ -184,12 +273,89 @@ def build_depth_mmap_cache(dataset_root: Path | str) -> dict[str, int]:
                 delete=False,
             ) as handle:
                 temp_path = Path(handle.name)
-                np.save(handle, source, allow_pickle=False)
+                np.save(handle, output, allow_pickle=False)
                 handle.flush()
                 os.fsync(handle.fileno())
         os.replace(temp_path, cache_path)
         created += 1
     return {"created": created, "reused": reused}
+
+
+def validate_depth_mmap_caches(
+    dataset_root: Path | str,
+    *,
+    expected_size: int | None = None,
+    expected_dtype: str | None = None,
+) -> dict[str, int]:
+    """Validate every episode mmap against its Parquet frame table."""
+    root = Path(dataset_root).expanduser().resolve()
+    parquet_paths = sorted(root.glob("data/*/*.parquet"))
+    if not parquet_paths:
+        raise FileNotFoundError(
+            f"no Parquet episodes found under {root / 'data'}"
+        )
+    dtype = np.dtype(expected_dtype) if expected_dtype is not None else None
+    seen_cache_paths: set[Path] = set()
+    total_frames = 0
+    total_bytes = 0
+    for parquet_path in parquet_paths:
+        frame_table = pd.read_parquet(parquet_path)
+        depth_column = (
+            "observation.depth.camera_h_m_path"
+            if "observation.depth.camera_h_m_path" in frame_table.columns
+            else "observation.depth.image_m_path"
+        )
+        if depth_column not in frame_table.columns:
+            raise ValueError(
+                f"camera-h depth path is missing from {parquet_path}"
+            )
+        relative_paths = {
+            str(value) for value in frame_table[depth_column].dropna()
+        }
+        if len(relative_paths) != 1:
+            raise ValueError(
+                f"{parquet_path} must reference exactly one depth episode; "
+                f"got {sorted(relative_paths)}"
+            )
+        source_path = root / relative_paths.pop()
+        cache_path = _depth_cache_path(source_path)
+        if cache_path in seen_cache_paths:
+            raise ValueError(f"duplicate depth mmap reference: {cache_path}")
+        seen_cache_paths.add(cache_path)
+        if not cache_path.is_file():
+            raise FileNotFoundError(cache_path)
+        cache = np.load(cache_path, mmap_mode="r", allow_pickle=False)
+        if cache.ndim != 3:
+            raise ValueError(
+                f"depth mmap must have shape [T,H,W], got {cache.shape}"
+            )
+        if cache.shape[0] != len(frame_table):
+            raise ValueError(
+                f"depth mmap frame count {cache.shape[0]} does not match "
+                f"Parquet frame count {len(frame_table)}: {cache_path}"
+            )
+        if expected_size is not None and tuple(cache.shape[1:]) != (
+            int(expected_size),
+            int(expected_size),
+        ):
+            raise ValueError(
+                f"depth mmap spatial shape {cache.shape[1:]} does not match "
+                f"{expected_size}x{expected_size}: {cache_path}"
+            )
+        if dtype is not None and cache.dtype != dtype:
+            raise ValueError(
+                f"depth mmap dtype {cache.dtype} does not match {dtype}: "
+                f"{cache_path}"
+            )
+        if not np.isfinite(cache).all():
+            raise ValueError(f"depth mmap contains non-finite values: {cache_path}")
+        total_frames += len(frame_table)
+        total_bytes += cache_path.stat().st_size
+    return {
+        "episodes": len(parquet_paths),
+        "frames": total_frames,
+        "bytes": total_bytes,
+    }
 
 
 def prepare_dataset(
@@ -270,12 +436,21 @@ def prepare_dataset(
     uvd = uvd_flat.reshape(len(frame_table), 2, 3)
 
     depth_path = root / str(frame_table.iloc[0][depth_column])
-    if not depth_path.is_file():
-        raise FileNotFoundError(depth_path)
-    with np.load(depth_path, allow_pickle=False) as payload:
-        if "depth_m" not in payload:
-            raise ValueError(f"depth_m is missing from {depth_path}")
-        depth_shape = tuple(int(value) for value in payload["depth_m"].shape)
+    cache_path = _depth_cache_path(depth_path)
+    if cache_path.is_file():
+        depth = np.load(cache_path, mmap_mode="r", allow_pickle=False)
+        depth_shape = tuple(int(value) for value in depth.shape)
+    elif depth_path.is_file():
+        with np.load(depth_path, allow_pickle=False) as payload:
+            if "depth_m" not in payload:
+                raise ValueError(f"depth_m is missing from {depth_path}")
+            depth_shape = tuple(
+                int(value) for value in payload["depth_m"].shape
+            )
+    else:
+        raise FileNotFoundError(
+            f"neither depth NPZ nor mmap cache exists: {depth_path}"
+        )
     if len(depth_shape) != 3 or depth_shape[0] != len(frame_table):
         raise ValueError(
             "camera_h depth must have shape [T,H,W] aligned to Parquet; "
@@ -345,6 +520,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Build uncompressed camera-h depth caches for random access.",
     )
+    parser.add_argument(
+        "--depth-target-size",
+        type=int,
+        default=None,
+        help="Optionally resize depth mmap caches to this square size.",
+    )
+    parser.add_argument(
+        "--depth-output-dtype",
+        choices=("float16", "float32"),
+        default=None,
+        help="Optionally cast generated depth mmap caches.",
+    )
     return parser.parse_args()
 
 
@@ -357,7 +544,11 @@ def main() -> None:
     )
     report = prepare_dataset(root, write_metadata=not args.check_only)
     if args.build_depth_mmap:
-        cache_report = build_depth_mmap_cache(root)
+        cache_report = build_depth_mmap_cache(
+            root,
+            target_size=args.depth_target_size,
+            output_dtype=args.depth_output_dtype,
+        )
         print(json.dumps({"depth_mmap": cache_report}, indent=2))
     print(json.dumps(asdict(report), indent=2))
 
