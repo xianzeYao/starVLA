@@ -35,11 +35,11 @@ def save_dataset_statistics(dataset_statistics, run_dir):
 
 def build_dataloader(cfg, dataset_py="lerobot_datasets_oxe"): # TODO now here only is get dataset, we need mv dataloader to here
 
-    if dataset_py == "arx_cot_lerobot_datasets":
-        from starVLA.dataloader.arx_cot_lerobot_datasets import (
-            collate_fn,
-            get_vla_dataset,
-        )
+    if dataset_py in {"arx_cot_lerobot_datasets", "realman_cot_lerobot_datasets"}:
+        if dataset_py == "arx_cot_lerobot_datasets":
+            from starVLA.dataloader.arx_cot_lerobot_datasets import collate_fn, get_vla_dataset
+        else:
+            from starVLA.dataloader.realman_cot_lerobot_datasets import collate_fn, get_vla_dataset
 
         vla_dataset_cfg = cfg.datasets.vla_data
         vla_dataset = get_vla_dataset(
