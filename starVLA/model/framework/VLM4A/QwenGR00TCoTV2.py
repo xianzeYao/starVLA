@@ -233,6 +233,9 @@ class Qwen_GR00T_CoT_V2(Qwen_GR00T):
             raise ValueError(
                 "separate_wrist_future_depth requires reconstruct_wrist_depth"
             )
+        enable_trace = _require_boolean_option(
+            geometry.get("enable_trace", True), name="enable_trace"
+        )
         self.geometry_layout = GeometryTokenLayout(
             depth_query_count=int(geometry.get("depth_query_count", 8)),
             uvd_points_per_hand=int(points_per_hand),
@@ -240,6 +243,7 @@ class Qwen_GR00T_CoT_V2(Qwen_GR00T):
             enable_current_depth=enable_current_depth,
             enable_future_depth=enable_future_depth,
             separate_wrist_future_depth=separate_wrist_future_depth,
+            enable_trace=enable_trace,
         )
         self.uvd_hand_count = int(self.geometry_layout.hand_count)
         self.uvd_token_order = "time_major"
@@ -270,10 +274,12 @@ class Qwen_GR00T_CoT_V2(Qwen_GR00T):
             if self.reconstruct_wrist_depth
             else None
         )
-        self.uvd_head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, self.trace_coordinate_dim),
+        self.uvd_head = (
+            nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.GELU(),
+                nn.Linear(hidden_dim, self.trace_coordinate_dim),
+            ) if enable_trace else None
         )
         self.depth_output_size = int(geometry.get("depth_output_size", geometry.get("image_size", 224)))
         self.uvd_depth_scale = float(geometry.get("uvd_depth_scale", 1.0))
@@ -288,6 +294,8 @@ class Qwen_GR00T_CoT_V2(Qwen_GR00T):
         )
         self.lambda_uvd = float(geometry.get("lambda_uvd", 0.62))
         self.lambda_uvd_relative = float(geometry.get("lambda_uvd_relative", 0.1))
+        if not enable_trace and (self.lambda_uvd != 0.0 or self.lambda_uvd_relative != 0.0):
+            raise ValueError("enable_trace=false requires zero UVD loss weights")
 
         backend = str(geometry.get("full_attention_backend", "sdpa"))
         if backend != "sdpa":
@@ -390,7 +398,8 @@ class Qwen_GR00T_CoT_V2(Qwen_GR00T):
         geometry_condition = []
         if include_depth:
             geometry_condition.extend([split.depth_current, split.depth_future])
-        geometry_condition.append(split.uvd)
+        if self.geometry_layout.enable_trace:
+            geometry_condition.append(split.uvd)
         condition = torch.cat([split.native, *geometry_condition], dim=1)
         if native_attention_mask is None:
             return condition, None
@@ -684,6 +693,8 @@ class Qwen_GR00T_CoT_V2(Qwen_GR00T):
         )
 
     def _predict_uvd(self, tokens: torch.Tensor) -> torch.Tensor:
+        if self.uvd_head is None:
+            raise RuntimeError("UVD head is disabled")
         raw = self.uvd_head(_cast_to_module_dtype(tokens, self.uvd_head))
         uv = torch.sigmoid(raw[..., :2])
         if getattr(self, "trace_coordinate_mode", "uvd") == "uv":
@@ -871,7 +882,7 @@ class Qwen_GR00T_CoT_V2(Qwen_GR00T):
             future_summary=future_summary,
             timing_callback=timing_callback,
         )
-        uvd = timed("uvd_head_ms", lambda: self._predict_uvd(split.uvd))
+        uvd = timed("uvd_head_ms", lambda: self._predict_uvd(split.uvd)) if self.geometry_layout.enable_trace else None
         return depth_current, depth_future, uvd
 
     def _action_loss(
@@ -915,7 +926,10 @@ class Qwen_GR00T_CoT_V2(Qwen_GR00T):
         **kwargs,
     ) -> dict[str, torch.Tensor]:
         qwen_inputs, native_attention_mask = self._build_native_inputs(examples, inference=False)
-        packed = self._prepare_uvd_targets(examples, qwen_inputs["input_ids"].device)
+        packed = (
+            self._prepare_uvd_targets(examples, qwen_inputs["input_ids"].device)
+            if self.geometry_layout.enable_trace else None
+        )
         split = self._run_geometry_backbone(qwen_inputs)
         depth_current, depth_future, uvd = self._decode_geometry(split, qwen_inputs)
         wrist_depth = (
@@ -981,7 +995,11 @@ class Qwen_GR00T_CoT_V2(Qwen_GR00T):
                 wrist_losses["wrist_depth_future_loss"] = masked_smooth_l1_loss(
                     wrist_future, wrist_future_target, wrist_future_valid
                 )
-        uvd_losses = self._compute_uvd_losses(uvd, packed)
+        uvd_losses = (
+            self._compute_uvd_losses(uvd, packed)
+            if self.geometry_layout.enable_trace
+            else {"absolute": zero_depth_loss, "relative": zero_depth_loss, "total": zero_depth_loss}
+        )
         uvd_loss = uvd_losses["total"]
         total_loss = aggregate_cot_total_loss(
             action_loss,
@@ -1094,7 +1112,7 @@ class Qwen_GR00T_CoT_V2(Qwen_GR00T):
         output: dict[str, Any] = {
             "depth_current": depth_current,
             "depth_future": depth_future,
-            "uvd": self._predict_uvd(split.uvd),
+            "uvd": self._predict_uvd(split.uvd) if self.geometry_layout.enable_trace else None,
             "depth_current_tokens": split.depth_current,
             "depth_future_tokens": split.depth_future,
             "uvd_tokens": split.uvd,
@@ -1338,6 +1356,8 @@ class Qwen_GR00T_CoT_V2(Qwen_GR00T):
             kwargs.pop("return_rollout_features", False),
             name="return_rollout_features",
         )
+        if geometry_uvd_only and not self.geometry_layout.enable_trace:
+            raise ValueError("geometry_uvd_only requires trace tokens")
         if (geometry_uvd_only or return_rollout_features) and not return_geometry:
             raise ValueError(
                 "geometry_uvd_only and return_rollout_features require return_geometry=True"
@@ -1392,29 +1412,25 @@ class Qwen_GR00T_CoT_V2(Qwen_GR00T):
                     qwen_inputs,
                     timing_callback=timing_callback,
                 )
-            if hasattr(self.geometry_layout, "uvd_time_points"):
+            if uvd is not None and hasattr(self.geometry_layout, "uvd_time_points"):
                 time_points = int(self.geometry_layout.uvd_time_points)
                 landmark_count = int(self.geometry_layout.landmark_count)
-            else:
+            elif uvd is not None:
                 time_points = int(self.geometry_layout.uvd_points_per_hand)
                 landmark_count = int(self.geometry_layout.hand_count)
-            uvd_time = torch.linspace(
-                0.0,
-                1.0,
-                time_points,
-                device=uvd.device,
-                dtype=torch.float32,
-            ).repeat_interleave(landmark_count)
-            uvd_landmark_ids = torch.arange(
-                landmark_count,
-                device=uvd.device,
-                dtype=torch.long,
-            ).repeat(time_points)
-            geometry = {
-                "uvd": uvd,
-                "uvd_time": uvd_time.unsqueeze(0).expand(uvd.shape[0], -1),
-                "uvd_landmark_ids": uvd_landmark_ids.unsqueeze(0).expand(uvd.shape[0], -1),
-            }
+            geometry = {}
+            if uvd is not None:
+                uvd_time = torch.linspace(
+                    0.0, 1.0, time_points, device=uvd.device, dtype=torch.float32
+                ).repeat_interleave(landmark_count)
+                uvd_landmark_ids = torch.arange(
+                    landmark_count, device=uvd.device, dtype=torch.long
+                ).repeat(time_points)
+                geometry.update({
+                    "uvd": uvd,
+                    "uvd_time": uvd_time.unsqueeze(0).expand(uvd.shape[0], -1),
+                    "uvd_landmark_ids": uvd_landmark_ids.unsqueeze(0).expand(uvd.shape[0], -1),
+                })
             if not geometry_uvd_only:
                 geometry["depth_current"] = depth_current
                 geometry["depth_future"] = depth_future

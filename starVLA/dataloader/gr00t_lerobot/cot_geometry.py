@@ -193,8 +193,12 @@ class CoTLeRobotSingleDataset(LeRobotSingleDataset):
             raise RuntimeError("trajectory data is not loaded")
         row0 = self.curr_traj_data.iloc[0]
         depth_rel = str(row0["observation.depth.image_m_path"])
-        camera_rel = str(row0["observation.camera.params_path"])
         depth = _read_npz_array(self.dataset_path / depth_rel, "depth_m")
+        if not self._cot_option("enable_trace", True):
+            episode_geometry = (depth, None, None, None)
+            self._cot_cache.put(trajectory_id, episode_geometry)
+            return episode_geometry
+        camera_rel = str(row0["observation.camera.params_path"])
         k = _read_npz_array(self.dataset_path / camera_rel, "agentview_K").astype(np.float32)
         t_world_camera = _read_npz_array(self.dataset_path / camera_rel, "agentview_T_world_camera").astype(np.float32)
         state = np.stack(self.curr_traj_data["observation.state"].to_numpy()).astype(np.float32)
@@ -322,6 +326,14 @@ class CoTLeRobotSingleDataset(LeRobotSingleDataset):
         if not preprocessed_depth:
             current_depth, current_valid = _resize_depth(current_depth, current_valid, target_hw)
             future_depth, future_valid = _resize_depth(future_depth, future_valid, target_hw)
+
+        if not self._cot_option("enable_trace", True):
+            return {
+                "depth_current": current_depth[None].astype(np.float32),
+                "depth_future": future_depth[None].astype(np.float32),
+                "depth_current_valid": current_valid[None].astype(np.bool_),
+                "depth_future_valid": future_valid[None].astype(np.bool_),
+            }
 
         sampled_uvd_pixels = eef_uvd[sample_indices]
         uvd, boundary_clamp = transform_uvd_to_model_space(

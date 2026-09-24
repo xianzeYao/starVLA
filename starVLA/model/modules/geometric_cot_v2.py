@@ -85,6 +85,7 @@ class GeometryTokenLayout:
     enable_current_depth: bool = True
     enable_future_depth: bool = True
     separate_wrist_future_depth: bool = False
+    enable_trace: bool = True
 
     def __post_init__(self) -> None:
         if int(self.depth_query_count) < 1:
@@ -99,6 +100,8 @@ class GeometryTokenLayout:
             raise ValueError("enable_future_depth must be a boolean")
         if not isinstance(self.separate_wrist_future_depth, bool):
             raise ValueError("separate_wrist_future_depth must be a boolean")
+        if not isinstance(self.enable_trace, bool):
+            raise ValueError("enable_trace must be a boolean")
         if self.separate_wrist_future_depth and not self.enable_future_depth:
             raise ValueError(
                 "separate_wrist_future_depth requires enable_future_depth"
@@ -114,7 +117,7 @@ class GeometryTokenLayout:
 
     @property
     def uvd_token_count(self) -> int:
-        return int(self.uvd_points_per_hand) * int(self.hand_count)
+        return int(self.uvd_points_per_hand) * int(self.hand_count) if self.enable_trace else 0
 
     @property
     def wrist_future_depth_token_count(self) -> int:
@@ -227,14 +230,14 @@ class GeometryTokenEmbedding(nn.Module):
             )
         else:
             self.register_parameter("wrist_future_depth_queries", None)
-        self.trajectory_seed = nn.Parameter(torch.randn(1, 1, self.hidden_dim) * 0.02)
-        self.time_embedding = nn.Sequential(
-            nn.Linear(1, self.hidden_dim),
-            nn.SiLU(),
-            nn.Linear(self.hidden_dim, self.hidden_dim),
+        self.trajectory_seed = nn.Parameter(torch.randn(1, 1, self.hidden_dim) * 0.02) if layout.enable_trace else None
+        self.time_embedding = (
+            nn.Sequential(nn.Linear(1, self.hidden_dim), nn.SiLU(), nn.Linear(self.hidden_dim, self.hidden_dim))
+            if layout.enable_trace else None
         )
         self.hand_embedding = (
-            nn.Embedding(int(layout.hand_count), self.hidden_dim) if int(layout.hand_count) > 1 else None
+            nn.Embedding(int(layout.hand_count), self.hidden_dim)
+            if layout.enable_trace and int(layout.hand_count) > 1 else None
         )
 
     def forward(
@@ -247,9 +250,19 @@ class GeometryTokenEmbedding(nn.Module):
         batch_size = int(batch_size)
         if batch_size < 1:
             raise ValueError(f"batch_size must be positive, got {batch_size}")
-        device = self.trajectory_seed.device
-        dtype = self.trajectory_seed.dtype
+        reference = next(self.parameters())
+        device = reference.device
+        dtype = reference.dtype
         expected_shape = (batch_size, self.layout.uvd_token_count)
+
+        if not self.layout.enable_trace:
+            if uvd_times is not None or uvd_hand_ids is not None:
+                raise ValueError("UVD metadata cannot be provided when trace is disabled")
+            empty = reference.new_empty(batch_size, 0, self.hidden_dim)
+            current = self.current_depth_queries.expand(batch_size, -1, -1) if self.current_depth_queries is not None else empty
+            future = self.future_depth_queries.expand(batch_size, -1, -1) if self.future_depth_queries is not None else empty
+            wrist = self.wrist_future_depth_queries.expand(batch_size, -1, -1) if self.wrist_future_depth_queries is not None else empty
+            return torch.cat([current, future, wrist], dim=1)
 
         if uvd_times is None:
             uvd_times = build_time_major_default_times(self.layout, device=device, dtype=dtype)
