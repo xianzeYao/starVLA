@@ -17,4 +17,7 @@ DATASET_NAMED_MIXTURES = {
     "cot_cube_v3": [
         ("cot_cube_v3_lerobot", 1.0, "arx_cot"),
     ],
+    "arx_cot_box": [
+        ("arx_cot_box", 1.0, "arx_cot"),
+    ],
 }

@@ -11,6 +11,7 @@ from omegaconf import OmegaConf
 
 from starVLA.training.train_starvla import VLATrainer
 from starVLA.training import train_starvla
+from starVLA.dataloader.gr00t_lerobot.registry import DATASET_NAMED_MIXTURES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,6 +95,12 @@ def test_arx_q32_nodepthcond_yaml_has_fixed_robot_and_geometry_contract():
     assert list(cfg.trainer.save_steps) == [40000, 60000]
     assert cfg.trainer.skip_final_step_checkpoint is True
     assert cfg.trainer.optimizer.fused is False
+
+
+def test_arx_box_mix_resolves_to_the_shared_arx_cot_embodiment():
+    assert DATASET_NAMED_MIXTURES["arx_cot_box"] == [
+        ("arx_cot_box", 1.0, "arx_cot"),
+    ]
 
 
 def test_arx_cube_v3_entrypoint_uses_a_consistent_40_step_contract():
