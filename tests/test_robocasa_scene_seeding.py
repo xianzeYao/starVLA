@@ -1,7 +1,9 @@
 import importlib
 import os
+import random
 import subprocess
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 import gymnasium as gym
@@ -33,6 +35,14 @@ class RecordingResetEnv(gym.Env):
         return np.zeros(1, dtype=np.float32), {}
 
 
+class RecordingRoboCasaResetEnv(RecordingResetEnv):
+    """Minimal stand-in for Gym's Groot wrapper around a Tabletop env."""
+
+    def __init__(self):
+        super().__init__()
+        self.env = SimpleNamespace(rng=np.random.default_rng(999))
+
+
 def test_episode_seed_wrapper_assigns_one_reproducible_seed_per_reset():
     try:
         seed_module = importlib.import_module(SEED_MODULE)
@@ -53,6 +63,54 @@ def test_episode_seed_wrapper_assigns_one_reproducible_seed_per_reset():
     wrapped.reset()
 
     assert env.reset_seeds == [23007, 23008, 23009]
+
+
+def test_episode_seed_wrapper_reseeds_underlying_robocasa_scene_rng():
+    seed_module = importlib.import_module(SEED_MODULE)
+    env = RecordingRoboCasaResetEnv()
+    wrapped = seed_module.EpisodeSeedWrapper(
+        env,
+        eval_seed=7,
+        task_index=2,
+        env_index=3,
+    )
+
+    wrapped.reset()
+
+    expected = np.random.default_rng(23007).integers(0, 2**31 - 1)
+    actual = env.env.rng.integers(0, 2**31 - 1)
+    assert actual == expected
+
+
+def test_episode_seed_wrapper_reseeds_python_random():
+    seed_module = importlib.import_module(SEED_MODULE)
+    random.seed(999)
+    wrapped = seed_module.EpisodeSeedWrapper(
+        RecordingResetEnv(),
+        eval_seed=7,
+        task_index=2,
+        env_index=3,
+    )
+
+    wrapped.reset()
+
+    assert random.random() == random.Random(23007).random()
+
+
+def test_episode_seed_wrapper_reseeds_numpy_global_random():
+    seed_module = importlib.import_module(SEED_MODULE)
+    np.random.seed(999)
+    wrapped = seed_module.EpisodeSeedWrapper(
+        RecordingResetEnv(),
+        eval_seed=7,
+        task_index=2,
+        env_index=3,
+    )
+
+    wrapped.reset()
+
+    expected = np.random.RandomState(23007).random_sample()
+    assert np.random.random() == expected
 
 
 def test_launcher_dry_run_records_scene_seed_protocol(tmp_path):
@@ -91,3 +149,4 @@ def test_launcher_dry_run_records_scene_seed_protocol(tmp_path):
     ).read_text(encoding="utf-8")
     assert "EVAL_SEED=123\n" in protocol
     assert "SCENE_SEED_SCHEME=task_env_episode_v1\n" in protocol
+    assert "PYTHONHASHSEED=0\n" in protocol

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import random
+
 import gymnasium as gym
+import numpy as np
 
 
 SCENE_SEED_SCHEME = "task_env_episode_v1"
@@ -67,4 +70,12 @@ class EpisodeSeedWrapper(gym.Wrapper):
             episode_index=self.episode_index,
         )
         self.episode_index += 1
+        # RoboCasa samples layouts, object instances, and placements from the
+        # underlying Tabletop Generator, not only NumPy's global RNG.  Reseed
+        # it before the hard reset so a scene seed denotes one exact world.
+        random.seed(assigned_seed)
+        np.random.seed(assigned_seed)
+        tabletop = getattr(self.env.unwrapped, "env", None)
+        if tabletop is not None and hasattr(tabletop, "rng"):
+            tabletop.rng = np.random.default_rng(assigned_seed)
         return self.env.reset(seed=assigned_seed, options=options)
