@@ -1,0 +1,74 @@
+run_id: qwen35_gr00t_realman_hanger_baseline
+run_root_dir: /root/data/yxz/outputs
+seed: 42
+wandb_entity: yao-xian-ze
+wandb_project: CoT
+is_debug: false
+version_id: '0.21'
+
+framework:
+  name: QwenGR00T
+  qwenvl:
+    base_vlm: /root/data/yxz/models/Qwen3.5-4B
+    attn_implementation: flash_attention_2
+  action_model:
+    action_model_type: DiT-B
+    hidden_size: 1024
+    add_pos_embed: true
+    max_seq_len: 1024
+    action_dim: 7
+    state_dim: 7
+    action_horizon: 20
+    repeated_diffusion_steps: 8
+    noise_beta_alpha: 1.5
+    noise_beta_beta: 1.0
+    noise_s: 0.999
+    num_timestep_buckets: 1000
+    num_inference_timesteps: 4
+    num_target_vision_tokens: 32
+    diffusion_model_cfg:
+      dropout: 0.2
+      final_dropout: true
+      interleave_self_attention: true
+      norm_type: ada_norm
+      num_layers: 16
+      output_dim: 1024
+      positional_embeddings: null
+
+datasets:
+  vla_data:
+    dataset_py: lerobot_datasets
+    data_root_dir: /root/data/yxz/datasets
+    data_mix: realman_cot_hanger
+    action_mode: abs
+    CoT_prompt: "Your task is {instruction}."
+    per_device_batch_size: 16
+    video_backend: pyav
+    num_workers: 8
+    persistent_workers: true
+    prefetch_factor: 2
+    include_state: false
+
+trainer:
+  max_train_steps: 80000
+  num_warmup_steps: 5000
+  save_interval: 40000
+  save_steps: [40000, 60000]
+  skip_final_step_checkpoint: true
+  eval_interval: 1000
+  learning_rate:
+    base: 1.0e-05
+    qwen_vl_interface: 1.0e-05
+    action_model: 0.0001
+  lr_scheduler_type: cosine_with_min_lr
+  scheduler_specific_kwargs:
+    min_lr: 5.0e-07
+  freeze_modules: ''
+  logging_frequency: 50
+  gradient_clipping: 1.0
+  gradient_accumulation_steps: 1
+  optimizer:
+    betas: [0.9, 0.95]
+    eps: 1.0e-08
+    weight_decay: 1.0e-08
+    fused: false
