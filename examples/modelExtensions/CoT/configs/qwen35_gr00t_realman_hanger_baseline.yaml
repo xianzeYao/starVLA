@@ -1,4 +1,4 @@
-run_id: qwen35_gr00t_realman_hanger_baseline
+run_id: qwen35_gr00t_realman_hanger_baseline_4gpu
 run_root_dir: /root/data/yxz/outputs
 seed: 42
 wandb_entity: yao-xian-ze

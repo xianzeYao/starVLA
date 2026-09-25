@@ -7,7 +7,7 @@ PYTHON_BIN="${PYTHON_BIN:-/root/data/yxz/miniforge3/envs/CoT_linearATT/bin/pytho
 NUM_PROCESSES="${NUM_PROCESSES:-4}"
 MAIN_PROCESS_PORT="${MAIN_PROCESS_PORT:-29521}"
 CONFIG_YAML="examples/modelExtensions/CoT/configs/qwen35_gr00t_realman_hanger_baseline.yaml"
-RUN_ID="${RUN_ID:-qwen35_gr00t_realman_hanger_baseline}"
+RUN_ID="${RUN_ID:-qwen35_gr00t_realman_hanger_baseline_4gpu}"
 RUN_ROOT_DIR="${RUN_ROOT_DIR:-/root/data/yxz/outputs}"
 
 for argument in "$@"; do

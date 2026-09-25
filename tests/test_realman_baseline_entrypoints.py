@@ -62,6 +62,28 @@ def test_baseline_launcher_dry_run_uses_generic_trainer_without_writing_output(t
     assert not run_root.exists()
 
 
+def test_baseline_default_launch_uses_four_gpu_run_id():
+    environment = {
+        key: value for key, value in os.environ.items()
+        if key not in {"RUN_ID", "NUM_PROCESSES"}
+    }
+    environment["DRY_RUN"] = "1"
+    result = subprocess.run(
+        ["bash", str(LAUNCHER)],
+        cwd=ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    command = shlex.split(result.stdout)
+    expected_run_id = "qwen35_gr00t_realman_hanger_baseline_4gpu"
+    assert command[command.index("--num_processes") + 1] == "4"
+    assert command[command.index("--run_id") + 1] == expected_run_id
+    assert OmegaConf.load(CONFIG).run_id == expected_run_id
+
+
 def test_baseline_launcher_accepts_direct_realman_dataset_root(tmp_path):
     dataset_root = tmp_path / "realman_cot_hanger"
     (dataset_root / "meta").mkdir(parents=True)
